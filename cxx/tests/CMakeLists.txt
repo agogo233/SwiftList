@@ -20,11 +20,14 @@ target_sources(engine_tests
         defs_tests.cpp
         utf8_tests.cpp
         arena_tests.cpp
+        snapshot_format_tests.cpp
+        snapshot_tests.cpp
 )
 
 target_link_libraries(engine_tests
     PRIVATE
         engine
+        index_v2
         GTest::gtest_main
 )
 
