@@ -22,12 +22,14 @@ target_sources(engine_tests
         arena_tests.cpp
         snapshot_format_tests.cpp
         snapshot_tests.cpp
+        fzf_tests.cpp
 )
 
 target_link_libraries(engine_tests
     PRIVATE
         engine
         index_v2
+        search
         GTest::gtest_main
 )
 
