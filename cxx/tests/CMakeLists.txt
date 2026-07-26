@@ -25,6 +25,7 @@ target_sources(engine_tests
         fzf_tests.cpp
         indexer_tests.cpp
         usn_parser_tests.cpp
+        pipe_tests.cpp
 )
 
 target_link_libraries(engine_tests
@@ -33,6 +34,7 @@ target_link_libraries(engine_tests
         index_v2
         search
         indexer
+        pipe
         GTest::gtest_main
 )
 
