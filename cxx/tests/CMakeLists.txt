@@ -23,6 +23,8 @@ target_sources(engine_tests
         snapshot_format_tests.cpp
         snapshot_tests.cpp
         fzf_tests.cpp
+        indexer_tests.cpp
+        usn_parser_tests.cpp
 )
 
 target_link_libraries(engine_tests
@@ -30,6 +32,7 @@ target_link_libraries(engine_tests
         engine
         index_v2
         search
+        indexer
         GTest::gtest_main
 )
 
