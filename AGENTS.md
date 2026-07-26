@@ -40,7 +40,7 @@ When interacting with this repository, performing code modification, compilation
    * Only when a binary/DLL lock conflict occurs during compilation leading to a build failure, and with explicit user authorization or instruction, you may release the locks using the following sequence:
      ```powershell
      # Stop the SwiftList Windows Service (requires Admin privileges)
-     powershell -Command "Start-Process net -ArgumentList 'stop SwiftList.Service' -Verb RunAs -WindowStyle Hidden"
+     powershell -Command "Start-Process net -ArgumentList 'stop SwiftListService' -Verb RunAs -WindowStyle Hidden"
      # Force kill running processes
      taskkill /f /im SwiftList.App.exe
      taskkill /f /im SwiftList.Service.exe
