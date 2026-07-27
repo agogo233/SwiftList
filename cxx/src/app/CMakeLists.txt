@@ -9,12 +9,14 @@ target_sources(app_lib
         quick_search_window.cpp
         app.cpp
         action_menu_builder.cpp
+        app_config.cpp
     PUBLIC
         pipe_client_wrapper.h
         search_view_model.h
         quick_search_window.h
         app.h
         action_menu_builder.h
+        app_config.h
 )
 
 target_include_directories(app_lib

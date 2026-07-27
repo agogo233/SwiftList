@@ -24,11 +24,11 @@ public:
     void NotifySearchFinished(bool cancelled);
 
 private:
-    std::wstring EventPipeName() const;
-    std::wstring CmdPipeName() const;
+    bool SendEvent(uint8_t eventType, uint32_t data = 0);
 
     std::wstring appName_;
     uint32_t sessionId_ = 0;
+    std::wstring eventPipeName_;
 };
 
 } // namespace swiftlist::hook

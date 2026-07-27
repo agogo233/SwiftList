@@ -31,6 +31,7 @@ private:
     ui::TextBox searchBox_;
     ui::ListBox resultsList_;
     SearchViewModel viewModel_;
+    std::vector<AppSearchResult> lastResults_;
     bool visible_ = false;
 };
 

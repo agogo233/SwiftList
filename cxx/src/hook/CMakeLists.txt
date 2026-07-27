@@ -23,7 +23,7 @@ target_include_directories(hook_lib
 
 target_compile_definitions(hook_lib PRIVATE WIN32_LEAN_AND_MEAN NOMINMAX)
 
-target_link_libraries(hook_lib PUBLIC ole32 oleaut32 shell32 wtsapi32)
+target_link_libraries(hook_lib PUBLIC ole32 oleaut32 shell32 wtsapi32 pipe)
 
 if(MSVC)
     target_compile_options(hook_lib PRIVATE /W4 /WX-)

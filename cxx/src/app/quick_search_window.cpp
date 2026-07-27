@@ -37,6 +37,7 @@ void QuickSearchWindow::Dismiss() {
 }
 
 void QuickSearchWindow::SetResults(const std::vector<AppSearchResult>& results) {
+    lastResults_ = results;
     std::vector<ui::ListBoxItem> items;
     items.reserve(results.size());
     for (const auto& r : results) {
@@ -122,6 +123,21 @@ void QuickSearchWindow::LayoutControls() {}
 void QuickSearchWindow::ExecuteSelected() {
     int idx = resultsList_.SelectedIndex();
     if (idx < 0) return;
+    if (idx >= static_cast<int>(lastResults_.size())) return;
+
+    const std::wstring& path = lastResults_[idx].Path;
+    if (path.empty()) return;
+
+    SHELLEXECUTEINFOW sei = {};
+    sei.cbSize = sizeof(sei);
+    sei.fMask = SEE_MASK_FLAG_NO_UI;
+    sei.lpVerb = L"open";
+    sei.lpFile = path.c_str();
+    sei.nShow = SW_SHOWNORMAL;
+    if (!ShellExecuteExW(&sei)) {
+        fwprintf(stderr, L"[QuickSearch] Failed to open: %s (error %lu)\n",
+                path.c_str(), GetLastError());
+    }
 }
 
 void QuickSearchWindow::NavigateSelection(int delta) {

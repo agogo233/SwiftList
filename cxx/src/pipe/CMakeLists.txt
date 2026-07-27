@@ -16,6 +16,7 @@ target_sources(pipe
         wire_format.h
         search_request_wire.h
         search_response_wire.h
+        hook_ipc_message.h
 )
 
 target_include_directories(pipe

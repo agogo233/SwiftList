@@ -28,6 +28,10 @@ target_sources(engine_tests
         pipe_tests.cpp
         ui_tests.cpp
         app_tests.cpp
+        app_config_tests.cpp
+        mft_index_scanner_tests.cpp
+        usn_monitor_tests.cpp
+        hook_ipc_tests.cpp
 )
 
 target_link_libraries(engine_tests
@@ -39,6 +43,7 @@ target_link_libraries(engine_tests
         pipe
         ui
         app_lib
+        hook_lib
         GTest::gtest_main
 )
 

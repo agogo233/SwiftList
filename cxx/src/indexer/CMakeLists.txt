@@ -6,12 +6,16 @@ target_sources(indexer
         usn_record_parser.cpp
         volume_helper.cpp
         journal_reader.cpp
+        mft_index_scanner.cpp
+        usn_monitor.cpp
     PUBLIC
         mft_parser.h
         usn_record_parser.h
         volume_helper.h
         journal_reader.h
         file_record_store.h
+        mft_index_scanner.h
+        usn_monitor.h
 )
 
 target_include_directories(indexer

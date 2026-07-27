@@ -64,23 +64,21 @@ bool PipeClientWrapper::SendSearch(const std::wstring& query, int limit) {
         return false;
     }
 
-    std::vector<uint8_t> response(65536);
-    pipe::DWORD bytesRead = 0;
-    return client_.ReadAll(response.data(),
-                           static_cast<DWORD>(response.size()), bytesRead) &&
-           bytesRead > 0 &&
-           pipe::ReadSearchResponseStream(
-               response.data(), bytesRead,
-               [this](const pipe::SearchResult& r) {
-                   AppSearchResult sr;
-                   sr.Name = ToWString(r.Name);
-                   sr.Path = ToWString(r.Path);
-                   sr.IsDir = r.IsDir;
-                   sr.Drive = ToWString(r.Drive);
-                   sr.RankSortKey = r.RankSortKey;
-                   sr.Metadata = r.Metadata;
-                   lastResults_.push_back(std::move(sr));
-               });
+    // Read the complete response message (handles messages larger than initial buffer).
+    std::vector<uint8_t> response;
+    if (!client_.ReadMessage(response)) return false;
+    return pipe::ReadSearchResponseStream(
+        response.data(), response.size(),
+        [this](const pipe::SearchResult& r) {
+            AppSearchResult sr;
+            sr.Name = ToWString(r.Name);
+            sr.Path = ToWString(r.Path);
+            sr.IsDir = r.IsDir;
+            sr.Drive = ToWString(r.Drive);
+            sr.RankSortKey = r.RankSortKey;
+            sr.Metadata = r.Metadata;
+            lastResults_.push_back(std::move(sr));
+        });
 }
 
 } // namespace swiftlist::app

@@ -89,4 +89,28 @@ bool PipeClient::ReadFrame(std::vector<uint8_t>& payload, DWORD* outMagic,
     return true;
 }
 
+bool PipeClient::ReadMessage(std::vector<uint8_t>& payload) {
+    // For PIPE_READMODE_MESSAGE: read the complete message, growing buffer as needed.
+    payload.resize(65536);
+    DWORD totalRead = 0;
+    while (true) {
+        DWORD chunk = 0;
+        BOOL ok = ReadFile(pipe_, payload.data() + totalRead,
+                            static_cast<DWORD>(payload.size()) - totalRead,
+                            &chunk, nullptr);
+        totalRead += chunk;
+        if (ok) {
+            payload.resize(totalRead);
+            return true;
+        }
+        DWORD err = GetLastError();
+        if (err == ERROR_MORE_DATA) {
+            if (chunk == 0) return false; // defensive: no progress, avoid infinite loop
+            payload.resize(payload.size() * 2);
+            continue;
+        }
+        return false;
+    }
+}
+
 } // namespace swiftlist::pipe

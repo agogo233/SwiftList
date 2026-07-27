@@ -22,33 +22,22 @@ static void SignalHandler(int /*sig*/) {
 static void OnKeyEvent(const KeyEvent& event) {
     switch (event.Type) {
     case KeyEventType::CtrlDoublePress:
-        fwprintf(stdout, L"[Hook] Double Ctrl detected\n");
+        g_inline->NotifyApp(GetCurrentProcessId());
         break;
     case KeyEventType::Escape:
-        fwprintf(stdout, L"[Hook] Escape\n");
-        break;
-    case KeyEventType::Enter:
-        fwprintf(stdout, L"[Hook] Enter\n");
-        break;
-    case KeyEventType::Char:
-        fwprintf(stdout, L"[Hook] Char: %c\n", event.Char);
+        g_inline->NotifySearchVisible(false);
         break;
     default:
         break;
     }
 }
 
-static void OnMouseEvent(const MouseEvent& event) {
-    if (event.LeftButton) {
-        fwprintf(stdout, L"[Hook] Left click at (%d, %d)%s\n",
-                 event.X, event.Y,
-                 event.DoubleClick ? L" (double)" : L"");
-    }
+static void OnMouseEvent(const MouseEvent& /*event*/) {
+    g_inline->NotifySearchVisible(false);
 }
 
 static void OnExplorerChanged(const ExplorerInfo& info) {
-    fwprintf(stdout, L"[Hook] Explorer: %s (desktop: %d)\n",
-             info.Path.c_str(), info.IsDesktop ? 1 : 0);
+    g_inline->NotifySelectionChanged(info.Path);
 }
 
 int wmain(int argc, wchar_t* argv[]) {

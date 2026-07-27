@@ -23,6 +23,12 @@ void ListBox::SetOnSelect(SelectFn cb) {
     onSelect_ = std::move(cb);
 }
 
+void ListBox::SetSelectedIndex(int index) {
+    if (index >= -1 && index < static_cast<int>(items_.size())) {
+        selectedIndex_ = index;
+    }
+}
+
 void ListBox::OnMouseMove(int x, int y) {
     if (x >= bounds_.left && x <= bounds_.right &&
         y >= bounds_.top && y <= bounds_.bottom) {

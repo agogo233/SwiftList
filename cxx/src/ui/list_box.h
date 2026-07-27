@@ -27,6 +27,7 @@ public:
     void SetItems(const std::vector<ListBoxItem>& items);
     void SetItemHeight(float height);
     void SetOnSelect(SelectFn cb);
+    void SetSelectedIndex(int index);
 
     void OnMouseMove(int x, int y);
     void OnLButtonDown(int x, int y);

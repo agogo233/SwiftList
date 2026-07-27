@@ -25,6 +25,7 @@ public:
     bool ReadAll(void* buffer, DWORD len, DWORD& bytesRead);
     bool ReadFrame(std::vector<uint8_t>& payload, DWORD* outMagic = nullptr,
                    DWORD* outVersion = nullptr);
+    bool ReadMessage(std::vector<uint8_t>& payload);
 
 private:
     HANDLE pipe_ = INVALID_HANDLE_VALUE;
