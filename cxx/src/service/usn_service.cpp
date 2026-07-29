@@ -4,10 +4,6 @@
 
 namespace swiftlist::service {
 
-WinService* WinService::instance_ = nullptr;
-SERVICE_STATUS_HANDLE WinService::statusHandle_ = nullptr;
-ServiceRequestFn WinService::handler_ = nullptr;
-
 WinService::WinService() = default;
 
 WinService::~WinService() {
@@ -62,7 +58,9 @@ void WINAPI WinService::ServiceMain(DWORD /*argc*/, LPWSTR* /*argv*/) {
     instance_->ReportStatus(SERVICE_STOPPED);
 }
 
-void WINAPI WinService::ServiceCtrlHandler(DWORD control) {
+DWORD WINAPI WinService::ServiceCtrlHandler(DWORD control, DWORD /*eventType*/,
+                                              void* /*eventData*/,
+                                              void* /*context*/) {
     if (!instance_) return;
 
     switch (control) {

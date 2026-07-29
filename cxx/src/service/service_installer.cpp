@@ -1,5 +1,7 @@
 #include "service/service_installer.h"
 
+#include <sddl.h>
+
 namespace swiftlist::service {
 
 static SC_HANDLE OpenSCM(DWORD access) {

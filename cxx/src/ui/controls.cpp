@@ -87,6 +87,7 @@ void Button::Draw(D2DSurface& surface) {
     ComPtr<ID2D1SolidColorBrush> brush;
     surface.Context()->CreateSolidColorBrush(color, brush.GetAddressOf());
 
+
     float radius = theme.CornerRadius;
     D2D1_ROUNDED_RECT rrect = { bounds_, radius, radius };
     surface.Context()->FillRoundedRectangle(rrect, brush.Get());
@@ -95,7 +96,7 @@ void Button::Draw(D2DSurface& surface) {
                                                   : theme.Colors.Border;
     auto bcolor = surface.ColorFromUint(borderColor);
     ComPtr<ID2D1SolidColorBrush> bbrush;
-    surface.Context()->CreateSolidColorBrush(bcolor, bbrush.Get());
+    surface.Context()->CreateSolidColorBrush(bcolor, bbrush.GetAddressOf());
     surface.Context()->DrawRoundedRectangle(rrect, bbrush.Get(), 1.0f);
 
     if (!text_.empty()) {

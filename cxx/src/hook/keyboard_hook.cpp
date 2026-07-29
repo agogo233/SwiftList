@@ -2,8 +2,6 @@
 
 namespace swiftlist::hook {
 
-KeyboardHook* KeyboardHook::instance_ = nullptr;
-
 KeyboardHook::KeyboardHook() {
     instance_ = this;
 }

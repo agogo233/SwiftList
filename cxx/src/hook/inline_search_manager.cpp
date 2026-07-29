@@ -1,7 +1,7 @@
 #include "hook/inline_search_manager.h"
 
-#include "pipe/pipe_client.h"
 #include "pipe/hook_ipc_message.h"
+#include "pipe/pipe_client.h"
 
 namespace swiftlist::hook {
 

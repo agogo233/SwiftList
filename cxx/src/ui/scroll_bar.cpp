@@ -63,13 +63,13 @@ void ScrollBar::Draw(D2DSurface& surface) {
 
     auto bgColor = surface.ColorFromUint(theme.Colors.Background);
     ComPtr<ID2D1SolidColorBrush> bgBrush;
-    surface.Context()->CreateSolidColorBrush(bgColor, bgBrush.Get());
+    surface.Context()->CreateSolidColorBrush(bgColor, bgBrush.GetAddressOf());
     surface.Context()->FillRectangle(bounds_, bgBrush.Get());
 
     auto thumb = ThumbRect();
     auto thumbColor = surface.ColorFromUint(theme.Colors.Border);
     ComPtr<ID2D1SolidColorBrush> thumbBrush;
-    surface.Context()->CreateSolidColorBrush(thumbColor, thumbBrush.Get());
+    surface.Context()->CreateSolidColorBrush(thumbColor, thumbBrush.GetAddressOf());
     D2D1_ROUNDED_RECT rrect = { thumb, 3.0f, 3.0f };
     surface.Context()->FillRoundedRectangle(rrect, thumbBrush.Get());
 }

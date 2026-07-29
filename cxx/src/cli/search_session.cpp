@@ -38,18 +38,6 @@ void SearchSession::CancelSearch() {
     state_ = SessionState::Results;
 }
 
-const std::vector<CliSearchResult>& SearchSession::Results() const {
-    return results_;
-}
-
-SessionState SearchSession::State() const {
-    return state_;
-}
-
-const std::wstring& SearchSession::Query() const {
-    return query_;
-}
-
 void SearchSession::ClearResults() {
     results_.clear();
 }

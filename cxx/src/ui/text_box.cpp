@@ -122,13 +122,13 @@ void TextBox::Draw(D2DSurface& surface) {
 
     auto bgColor = surface.ColorFromUint(theme.Colors.Background);
     ComPtr<ID2D1SolidColorBrush> bgBrush;
-    surface.Context()->CreateSolidColorBrush(bgColor, bgBrush.Get());
+    surface.Context()->CreateSolidColorBrush(bgColor, bgBrush.GetAddressOf());
     surface.Context()->FillRectangle(bounds_, bgBrush.Get());
 
     auto borderColor = focused_ ? theme.Colors.Primary : theme.Colors.Border;
     auto bcolor = surface.ColorFromUint(borderColor);
     ComPtr<ID2D1SolidColorBrush> bbrush;
-    surface.Context()->CreateSolidColorBrush(bcolor, bbrush.Get());
+    surface.Context()->CreateSolidColorBrush(bcolor, bbrush.GetAddressOf());
     surface.Context()->DrawRectangle(bounds_, bbrush.Get(), focused_ ? 2.0f : 1.0f);
 
     float pad = theme.Spacing.Sm;
@@ -168,7 +168,7 @@ void TextBox::Draw(D2DSurface& surface) {
         float caretX = textRect.left + measure.width;
         auto caretColor = surface.ColorFromUint(theme.Colors.Primary);
         ComPtr<ID2D1SolidColorBrush> caretBrush;
-        surface.Context()->CreateSolidColorBrush(caretColor, caretBrush.Get());
+        surface.Context()->CreateSolidColorBrush(caretColor, caretBrush.GetAddressOf());
         surface.Context()->DrawLine(
             D2D1::Point2F(caretX, textRect.top),
             D2D1::Point2F(caretX, textRect.top + theme.FontSize + 2.0f),

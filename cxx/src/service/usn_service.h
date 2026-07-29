@@ -27,7 +27,8 @@ public:
 
 private:
     static void WINAPI ServiceMain(DWORD argc, LPWSTR* argv);
-    static void WINAPI ServiceCtrlHandler(DWORD control);
+    static DWORD WINAPI ServiceCtrlHandler(DWORD control, DWORD eventType,
+                                            void* eventData, void* context);
     void ReportStatus(DWORD currentState, DWORD waitHint = 0);
 
     static inline WinService* instance_;

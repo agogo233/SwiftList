@@ -1,10 +1,9 @@
 #include "hook/explorer_tracker.h"
 
+#include <exdisp.h>
 #include <shlobj.h>
 
 namespace swiftlist::hook {
-
-ExplorerTracker* ExplorerTracker::instance_ = nullptr;
 
 ExplorerTracker::ExplorerTracker() {
     instance_ = this;

@@ -69,7 +69,7 @@ void ListBox::Draw(D2DSurface& surface) {
 
     auto bgColor = surface.ColorFromUint(theme.Colors.Surface);
     ComPtr<ID2D1SolidColorBrush> bgBrush;
-    surface.Context()->CreateSolidColorBrush(bgColor, bgBrush.Get());
+    surface.Context()->CreateSolidColorBrush(bgColor, bgBrush.GetAddressOf());
     surface.Context()->FillRectangle(bounds_, bgBrush.Get());
 
     float visibleHeight = bounds_.bottom - bounds_.top;
@@ -89,7 +89,7 @@ void ListBox::Draw(D2DSurface& surface) {
         if (bg != 0) {
             auto color = surface.ColorFromUint(bg);
             ComPtr<ID2D1SolidColorBrush> brush;
-            surface.Context()->CreateSolidColorBrush(color, brush.Get());
+            surface.Context()->CreateSolidColorBrush(color, brush.GetAddressOf());
             surface.Context()->FillRectangle(rect, brush.Get());
         }
 

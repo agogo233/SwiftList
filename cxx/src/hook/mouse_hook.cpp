@@ -2,8 +2,6 @@
 
 namespace swiftlist::hook {
 
-MouseHook* MouseHook::instance_ = nullptr;
-
 MouseHook::MouseHook() {
     instance_ = this;
 }

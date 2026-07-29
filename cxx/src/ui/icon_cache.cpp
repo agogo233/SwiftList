@@ -1,6 +1,9 @@
 #include "ui/icon_cache.h"
 
 #include <shellapi.h>
+#ifdef ExtractIcon
+#undef ExtractIcon
+#endif
 
 namespace swiftlist::ui {
 
@@ -55,10 +58,6 @@ ComPtr<ID2D1Bitmap> IconCache::GetIcon(const std::wstring& path,
     DestroyIcon(icon);
     return bitmap;
 }
-
-#ifdef ExtractIcon
-#undef ExtractIcon
-#endif
 
 HICON IconCache::ExtractIcon(const std::wstring& path) {
     SHFILEINFOW sfi = {};

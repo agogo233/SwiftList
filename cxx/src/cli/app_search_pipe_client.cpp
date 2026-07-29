@@ -1,5 +1,7 @@
 #include "cli/app_search_pipe_client.h"
 
+#include "pipe/search_request_wire.h"
+
 #include <WinNls.h>
 
 namespace swiftlist::cli {
@@ -56,7 +58,7 @@ bool AppSearchPipeClient::Search(const std::wstring& query, int limit,
     }
 
     std::vector<uint8_t> response(65536);
-    pipe::DWORD bytesRead = 0;
+    DWORD bytesRead = 0;
     if (!client_.ReadAll(response.data(),
                          static_cast<DWORD>(response.size()), bytesRead)) {
         return false;
