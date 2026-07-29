@@ -11,6 +11,7 @@ on:
     paths:
       - 'cxx/**'
       - '.github/workflows/cxx-build.yml'
+  workflow_dispatch:
 
 jobs:
   build-windows:
