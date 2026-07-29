@@ -183,12 +183,12 @@ HRESULT D2DSurface::EndDraw() {
     return hr;
 }
 
-D2D1::ColorF D2DSurface::ColorFromUint(uint32_t rgba) const {
+D2D1_COLOR_F D2DSurface::ColorFromUint(uint32_t rgba) const {
     float r = static_cast<float>((rgba >> 16) & 0xFF) / 255.0f;
     float g = static_cast<float>((rgba >> 8) & 0xFF) / 255.0f;
     float b = static_cast<float>(rgba & 0xFF) / 255.0f;
     float a = static_cast<float>((rgba >> 24) & 0xFF) / 255.0f;
-    return D2D1::ColorF(r, g, b, a);
+    return D2D1_COLOR_F{ r, g, b, a };
 }
 
 ComPtr<ID2D1Bitmap> D2DSurface::BitmapFromIcon(HICON icon) {

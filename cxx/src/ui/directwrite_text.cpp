@@ -48,7 +48,7 @@ void TextRenderer::DrawText(const std::wstring& text, const D2D1_RECT_F& rect,
     auto format = CreateFormat(style);
     if (!format) return;
 
-    D2D1_COLOR_F color = surface_.ColorFromUint(style.Color);
+    auto color = surface_.ColorFromUint(style.Color);
     ComPtr<ID2D1SolidColorBrush> brush;
     HRESULT hr = surface_.Context()->CreateSolidColorBrush(color,
                                                               brush.GetAddressOf());

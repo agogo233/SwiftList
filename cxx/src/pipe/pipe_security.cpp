@@ -1,5 +1,8 @@
 #include "pipe/pipe_security.h"
 
+#include <sddl.h>
+#include <windows.h>
+
 namespace swiftlist::pipe {
 
 SECURITY_ATTRIBUTES* CreateEveryoneSecurity() {

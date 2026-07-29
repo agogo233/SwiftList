@@ -62,16 +62,12 @@ void ListBox::ScrollTo(int offset) {
     scrollOffset_ = std::clamp(offset, 0, maxOffset);
 }
 
-int ListBox::SelectedIndex() const {
-    return selectedIndex_;
-}
-
 void ListBox::Draw(D2DSurface& surface) {
     if (!surface.Context()) return;
 
     const auto& theme = ThemeManager::Instance().Current();
 
-    D2D1_COLOR_F bgColor = surface.ColorFromUint(theme.Colors.Surface);
+    auto bgColor = surface.ColorFromUint(theme.Colors.Surface);
     ComPtr<ID2D1SolidColorBrush> bgBrush;
     surface.Context()->CreateSolidColorBrush(bgColor, bgBrush.Get());
     surface.Context()->FillRectangle(bounds_, bgBrush.Get());
@@ -91,7 +87,7 @@ void ListBox::Draw(D2DSurface& surface) {
             bg = theme.Colors.SurfaceHover;
         }
         if (bg != 0) {
-            D2D1_COLOR_F color = surface.ColorFromUint(bg);
+            auto color = surface.ColorFromUint(bg);
             ComPtr<ID2D1SolidColorBrush> brush;
             surface.Context()->CreateSolidColorBrush(color, brush.Get());
             surface.Context()->FillRectangle(rect, brush.Get());

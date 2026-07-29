@@ -43,7 +43,7 @@ public:
     IDWriteFactory* WriteFactory() const { return dwriteFactory_.Get(); }
     IWICImagingFactory* WICFactory() const { return wicFactory_.Get(); }
 
-    D2D1::ColorF ColorFromUint(uint32_t rgba) const;
+    D2D1_COLOR_F ColorFromUint(uint32_t rgba) const;
 
     ComPtr<ID2D1Bitmap> BitmapFromIcon(HICON icon);
 

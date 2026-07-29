@@ -65,8 +65,8 @@ SnapshotColumns SnapshotBuilder::Build(std::vector<FileRecordInput> records,
             std::memcpy(cols.nameBlob.data() + offset, name.data(), nameLen);
             cols.nameOffsets.push_back(static_cast<uint32_t>(cols.nameBlob.size()));
 
-            uniqueNames.push_back(
-                std::string_view(cols.nameBlob.data() + offset, nameLen));
+            const char* namePtr = cols.nameBlob.data() + offset;
+            uniqueNames.push_back(std::string_view(namePtr, nameLen));
         } else {
             cols.nameIds[i] = it->second;
         }

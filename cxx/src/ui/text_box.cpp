@@ -120,13 +120,13 @@ void TextBox::Draw(D2DSurface& surface) {
 
     const auto& theme = ThemeManager::Instance().Current();
 
-    D2D1_COLOR_F bgColor = surface.ColorFromUint(theme.Colors.Background);
+    auto bgColor = surface.ColorFromUint(theme.Colors.Background);
     ComPtr<ID2D1SolidColorBrush> bgBrush;
     surface.Context()->CreateSolidColorBrush(bgColor, bgBrush.Get());
     surface.Context()->FillRectangle(bounds_, bgBrush.Get());
 
     auto borderColor = focused_ ? theme.Colors.Primary : theme.Colors.Border;
-    D2D1_COLOR_F bcolor = surface.ColorFromUint(borderColor);
+    auto bcolor = surface.ColorFromUint(borderColor);
     ComPtr<ID2D1SolidColorBrush> bbrush;
     surface.Context()->CreateSolidColorBrush(bcolor, bbrush.Get());
     surface.Context()->DrawRectangle(bounds_, bbrush.Get(), focused_ ? 2.0f : 1.0f);
@@ -166,7 +166,7 @@ void TextBox::Draw(D2DSurface& surface) {
             text_.substr(0, caretPos_), bounds_.right - bounds_.left, tstyle);
 
         float caretX = textRect.left + measure.width;
-        D2D1_COLOR_F caretColor = surface.ColorFromUint(theme.Colors.Primary);
+        auto caretColor = surface.ColorFromUint(theme.Colors.Primary);
         ComPtr<ID2D1SolidColorBrush> caretBrush;
         surface.Context()->CreateSolidColorBrush(caretColor, caretBrush.Get());
         surface.Context()->DrawLine(

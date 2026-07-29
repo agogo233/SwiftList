@@ -55,6 +55,13 @@ inline int32_t Read7BitEncodedInt(std::span<const uint8_t> src, size_t& offset) 
     throw std::runtime_error("varint too long");
 }
 
+constexpr size_t Max7BitLen(int32_t value) {
+    uint32_t u = static_cast<uint32_t>(value);
+    size_t n = 1;
+    while (u >= 0x80) { u >>= 7; ++n; }
+    return n;
+}
+
 inline void WriteString(std::vector<uint8_t>& buf, std::string_view str) {
     auto len = static_cast<int32_t>(str.size());
     auto prev = buf.size();
@@ -77,13 +84,6 @@ inline std::string ReadString(std::span<const uint8_t> src, size_t& offset) {
     std::string s(reinterpret_cast<const char*>(src.data() + offset), static_cast<size_t>(len));
     offset += static_cast<size_t>(len);
     return s;
-}
-
-constexpr size_t Max7BitLen(int32_t value) {
-    uint32_t u = static_cast<uint32_t>(value);
-    size_t n = 1;
-    while (u >= 0x80) { u >>= 7; ++n; }
-    return n;
 }
 
 inline void WriteInt32LE(std::span<uint8_t> dest, int32_t value) {

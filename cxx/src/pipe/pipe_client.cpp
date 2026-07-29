@@ -1,4 +1,5 @@
 #include "pipe/pipe_client.h"
+#include "pipe/wire_format.h"
 
 #include <cstring>
 

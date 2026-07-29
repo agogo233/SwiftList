@@ -83,7 +83,7 @@ void Button::Draw(D2DSurface& surface) {
     default: break;
     }
 
-    D2D1_COLOR_F color = surface.ColorFromUint(bgColor);
+    auto color = surface.ColorFromUint(bgColor);
     ComPtr<ID2D1SolidColorBrush> brush;
     surface.Context()->CreateSolidColorBrush(color, brush.GetAddressOf());
 
@@ -93,7 +93,7 @@ void Button::Draw(D2DSurface& surface) {
 
     uint32_t borderColor = state_ == State::Hover ? theme.Colors.Primary
                                                   : theme.Colors.Border;
-    D2D1_COLOR_F bcolor = surface.ColorFromUint(borderColor);
+    auto bcolor = surface.ColorFromUint(borderColor);
     ComPtr<ID2D1SolidColorBrush> bbrush;
     surface.Context()->CreateSolidColorBrush(bcolor, bbrush.Get());
     surface.Context()->DrawRoundedRectangle(rrect, bbrush.Get(), 1.0f);
