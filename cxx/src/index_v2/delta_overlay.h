@@ -1,6 +1,7 @@
 #pragma once
 
 #include "index_v2/snapshot.h"
+#include "index_v2/snapshot_builder.h"
 
 #include <mutex>
 #include <unordered_map>

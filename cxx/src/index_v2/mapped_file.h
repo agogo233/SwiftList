@@ -22,13 +22,15 @@ public:
     // Opens and maps a file for reading.
     void Open(const std::string& path);
 
+    // Closes the mapped file.
+    void Close() noexcept;
+
     // Returns a pointer to the mapped data, or nullptr if not open.
     [[nodiscard]] const void* Data() const noexcept { return m_data; }
     [[nodiscard]] size_t Size() const noexcept { return m_size; }
     [[nodiscard]] bool IsOpen() const noexcept { return m_data != nullptr; }
 
 private:
-    void Close() noexcept;
 
 #ifdef _WIN32
     void* m_file = nullptr;     // HANDLE

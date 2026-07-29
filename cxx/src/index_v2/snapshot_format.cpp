@@ -2,6 +2,8 @@
 
 #include <algorithm>
 #include <cassert>
+#include <istream>
+#include <ostream>
 #include <stdexcept>
 #include <string>
 

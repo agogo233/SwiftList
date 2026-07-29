@@ -41,7 +41,7 @@ ComPtr<ID2D1Bitmap> IconCache::GetIcon(const std::wstring& path,
         if (!oldestKey.empty()) cache_.erase(oldestKey);
     }
 
-    HICON icon = ExtractIcon(path);
+    HICON icon = this->ExtractIcon(path);
     if (!icon) return nullptr;
 
     ComPtr<ID2D1Bitmap> bitmap = surface.BitmapFromIcon(icon);

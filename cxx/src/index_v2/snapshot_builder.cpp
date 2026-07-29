@@ -60,11 +60,13 @@ SnapshotColumns SnapshotBuilder::Build(std::vector<FileRecordInput> records,
 
             // Append to NameBlob.
             size_t offset = cols.nameBlob.size();
-            cols.nameBlob.resize(offset + name.size());
-            std::memcpy(cols.nameBlob.data() + offset, name.data(), name.size());
+            size_t nameLen = name.size();
+            cols.nameBlob.resize(offset + nameLen);
+            std::memcpy(cols.nameBlob.data() + offset, name.data(), nameLen);
             cols.nameOffsets.push_back(static_cast<uint32_t>(cols.nameBlob.size()));
 
-            uniqueNames.push_back(std::string_view(cols.nameBlob.data() + offset, name.size()));
+            uniqueNames.push_back(
+                std::string_view(cols.nameBlob.data() + offset, nameLen));
         } else {
             cols.nameIds[i] = it->second;
         }

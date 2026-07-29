@@ -34,6 +34,7 @@ public:
 private:
     void EnsureCaretVisible();
     int HitTestText(int x) const;
+    void SetFocusCaret();
 
     std::wstring text_;
     std::wstring placeholder_;

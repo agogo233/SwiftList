@@ -71,7 +71,7 @@ void ListBox::Draw(D2DSurface& surface) {
 
     const auto& theme = ThemeManager::Instance().Current();
 
-    auto bgColor = surface.ColorFromUint(theme.Colors.Surface);
+    D2D1_COLOR_F bgColor = surface.ColorFromUint(theme.Colors.Surface);
     ComPtr<ID2D1SolidColorBrush> bgBrush;
     surface.Context()->CreateSolidColorBrush(bgColor, bgBrush.Get());
     surface.Context()->FillRectangle(bounds_, bgBrush.Get());
@@ -91,7 +91,7 @@ void ListBox::Draw(D2DSurface& surface) {
             bg = theme.Colors.SurfaceHover;
         }
         if (bg != 0) {
-            auto color = surface.ColorFromUint(bg);
+            D2D1_COLOR_F color = surface.ColorFromUint(bg);
             ComPtr<ID2D1SolidColorBrush> brush;
             surface.Context()->CreateSolidColorBrush(color, brush.Get());
             surface.Context()->FillRectangle(rect, brush.Get());
