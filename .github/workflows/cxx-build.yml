@@ -2,12 +2,12 @@ name: C++ Build & Test
 
 on:
   push:
-    branches: [main]
+    branches: [main, Mod]
     paths:
       - 'cxx/**'
       - '.github/workflows/cxx-build.yml'
   pull_request:
-    branches: [main]
+    branches: [main, Mod]
     paths:
       - 'cxx/**'
       - '.github/workflows/cxx-build.yml'
