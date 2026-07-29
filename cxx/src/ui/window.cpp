@@ -192,6 +192,7 @@ void Window::OnSize(uint32_t width, uint32_t height) {
 
 void Window::OnDpiChanged(WORD dpiX, WORD /*dpiY*/, const RECT* rect) {
     SetDpi(dpiX);
+    surface_.SetDpi(static_cast<float>(dpiX), static_cast<float>(dpiY));
     if (rect) {
         SetWindowPos(hwnd_, nullptr, rect->left, rect->top,
                      rect->right - rect->left, rect->bottom - rect->top,

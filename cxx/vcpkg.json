@@ -1,0 +1,6 @@
+{
+    "name": "swiftlist-cxx",
+    "version": "0.1.0",
+    "description": "SwiftList C++ port: high-performance NTFS file search",
+    "dependencies": []
+}

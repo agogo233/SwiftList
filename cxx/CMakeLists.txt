@@ -16,7 +16,9 @@ set(CMAKE_CXX_EXTENSIONS OFF)
 if(MSVC)
     set(CMAKE_MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>")
     add_compile_definitions(_WIN32_WINNT=0x0A00 WIN32_LEAN_AND_MEAN NOMINMAX)
-    add_compile_options(/W4 /WX-)
+    add_compile_options(/W4 /WX)
+    add_compile_options($<$<CONFIG:Release>:/GL>)
+    add_link_options($<$<CONFIG:Release>:/LTCG>)
 endif()
 
 # Build library by default

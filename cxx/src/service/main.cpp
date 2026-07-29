@@ -109,34 +109,37 @@ static int DoUninstall() {
 }
 
 int wmain(int argc, wchar_t* argv[]) {
+    HRESULT hr = CoInitializeEx(nullptr, COINIT_MULTITHREADED);
+    if (FAILED(hr)) return 1;
+
+    int result = 0;
+
     if (argc > 1) {
         std::wstring arg = argv[1];
 
         if (arg == L"--service") {
             WinService service;
-            return RunAsService(service);
-        }
-
-        if (arg == L"--install" || arg == L"-i") {
+            result = RunAsService(service);
+        } else if (arg == L"--install" || arg == L"-i") {
             if (argc < 3) {
                 PrintUsage(argv[0]);
-                return 1;
+                result = 1;
+            } else {
+                result = DoInstall(argv[2]);
             }
-            return DoInstall(argv[2]);
-        }
-
-        if (arg == L"--uninstall" || arg == L"-u") {
-            return DoUninstall();
-        }
-
-        if (arg == L"--hook") {
+        } else if (arg == L"--uninstall" || arg == L"-u") {
+            result = DoUninstall();
+        } else if (arg == L"--hook") {
             fwprintf(stdout, L"Use 'hook.exe' directly for hook mode.\n");
-            return 0;
+            result = 0;
+        } else {
+            PrintUsage(argv[0]);
+            result = 1;
         }
-
-        PrintUsage(argv[0]);
-        return 1;
+    } else {
+        result = RunAsDebugConsole();
     }
 
-    return RunAsDebugConsole();
+    CoUninitialize();
+    return result;
 }

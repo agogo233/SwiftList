@@ -32,6 +32,7 @@ public:
     bool CreateDeviceResources(HWND hwnd);
     void DiscardDeviceResources();
     void Resize(uint32_t width, uint32_t height);
+    void SetDpi(float dpiX, float dpiY);
 
     void BeginDraw();
     HRESULT EndDraw();
@@ -57,6 +58,9 @@ private:
 
     ComPtr<IDWriteFactory> dwriteFactory_;
     ComPtr<IWICImagingFactory> wicFactory_;
+
+    float dpiX_ = 96.0f;
+    float dpiY_ = 96.0f;
 };
 
 } // namespace swiftlist::ui

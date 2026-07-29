@@ -27,7 +27,7 @@ target_include_directories(app_lib
 
 target_compile_definitions(app_lib PRIVATE WIN32_LEAN_AND_MEAN NOMINMAX)
 
-target_link_libraries(app_lib PUBLIC ui pipe search engine)
+target_link_libraries(app_lib PUBLIC ui pipe search engine Shcore.lib)
 
 if(MSVC)
     target_compile_options(app_lib PRIVATE /W4 /WX-)

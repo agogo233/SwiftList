@@ -62,13 +62,13 @@ public:
     [[nodiscard]] bool Contains(UInt128 id) const;
 
     // Iterate all added records (not in base snapshot).
-    [[nodiscard]] const std::vector<DeltaRecord>& AddedRecords() const { return m_added; }
+    [[nodiscard]] std::vector<DeltaRecord> AddedRecords() const;
 
     // Iterate overrides to base rows (keyed by base row index).
-    [[nodiscard]] const std::unordered_map<int, DeltaRecord>& Overrides() const { return m_overrides; }
+    [[nodiscard]] std::unordered_map<int, DeltaRecord> Overrides() const;
 
     // Set of base row indices marked as deleted.
-    [[nodiscard]] const std::unordered_set<int>& DeletedBaseRows() const { return m_deleted; }
+    [[nodiscard]] std::unordered_set<int> DeletedBaseRows() const;
 
     // Clear all overlay state.
     void Clear();

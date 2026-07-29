@@ -40,6 +40,11 @@ bool D2DSurface::CreateDeviceIndependentResources() {
     return true;
 }
 
+void D2DSurface::SetDpi(float dpiX, float dpiY) {
+    dpiX_ = dpiX;
+    dpiY_ = dpiY;
+}
+
 bool D2DSurface::CreateDeviceResources(HWND hwnd) {
     if (!CreateDeviceIndependentResources()) return false;
 
@@ -107,8 +112,8 @@ bool D2DSurface::CreateDeviceResources(HWND hwnd) {
     D2D1_BITMAP_PROPERTIES1 bitmapProps = {};
     bitmapProps.pixelFormat.format = DXGI_FORMAT_B8G8R8A8_UNORM;
     bitmapProps.pixelFormat.alphaMode = DXGI_ALPHA_MODE_PREMULTIPLIED;
-    bitmapProps.dpiX = 96.0f;
-    bitmapProps.dpiY = 96.0f;
+    bitmapProps.dpiX = dpiX_;
+    bitmapProps.dpiY = dpiY_;
     bitmapProps.bitmapOptions = D2D1_BITMAP_OPTIONS_TARGET | D2D1_BITMAP_OPTIONS_CANNOT_DRAW;
 
     hr = context_->CreateBitmapFromDxgiSurface(
@@ -146,8 +151,8 @@ void D2DSurface::Resize(uint32_t width, uint32_t height) {
     D2D1_BITMAP_PROPERTIES1 bitmapProps = {};
     bitmapProps.pixelFormat.format = DXGI_FORMAT_B8G8R8A8_UNORM;
     bitmapProps.pixelFormat.alphaMode = DXGI_ALPHA_MODE_PREMULTIPLIED;
-    bitmapProps.dpiX = 96.0f;
-    bitmapProps.dpiY = 96.0f;
+    bitmapProps.dpiX = dpiX_;
+    bitmapProps.dpiY = dpiY_;
     bitmapProps.bitmapOptions = D2D1_BITMAP_OPTIONS_TARGET | D2D1_BITMAP_OPTIONS_CANNOT_DRAW;
 
     hr = context_->CreateBitmapFromDxgiSurface(

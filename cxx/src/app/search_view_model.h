@@ -3,7 +3,6 @@
 #include "app/pipe_client_wrapper.h"
 
 #include <chrono>
-#include <functional>
 #include <string>
 #include <thread>
 #include <vector>
@@ -12,8 +11,6 @@ namespace swiftlist::app {
 
 class SearchViewModel {
 public:
-    using ResultsFn = std::function<void(const std::vector<AppSearchResult>&)>;
-
     SearchViewModel();
     ~SearchViewModel();
 
@@ -21,11 +18,13 @@ public:
     SearchViewModel& operator=(const SearchViewModel&) = delete;
 
     void SetPipeName(const std::wstring& name);
-    void SetOnResults(ResultsFn cb);
     void SetDebounceMs(uint32_t ms);
+    void SetWindow(HWND hwnd);
 
     void OnQueryChanged(const std::wstring& query);
     void CancelPending();
+
+    static constexpr UINT kResultsMessage = WM_APP + 1;
 
 private:
     void DebounceLoop();
@@ -35,7 +34,7 @@ private:
     std::wstring currentQuery_;
     std::wstring pendingQuery_;
     uint32_t debounceMs_ = 50;
-    ResultsFn onResults_;
+    HWND hwnd_ = nullptr;
 
     std::atomic<bool> running_{false};
     std::atomic<bool> queryDirty_{false};

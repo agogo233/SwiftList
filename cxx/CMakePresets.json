@@ -26,7 +26,7 @@
             "cacheVariables": {
                 "CMAKE_MSVC_RUNTIME_LIBRARY": "MultiThreaded",
                 "CMAKE_BUILD_TYPE": "Release",
-                "BUILD_TESTING": "ON"
+                "BUILD_TESTING": "OFF"
             }
         },
         {
@@ -60,7 +60,7 @@
                 "CMAKE_C_COMPILER": "clang-cl",
                 "CMAKE_CXX_COMPILER": "clang-cl",
                 "CMAKE_BUILD_TYPE": "Release",
-                "BUILD_TESTING": "ON"
+                "BUILD_TESTING": "OFF"
             }
         }
     ],

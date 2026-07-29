@@ -14,7 +14,7 @@ namespace swiftlist::pipe {
 constexpr uint32_t kRequestMagic = 0x51504C53;   // SLPQ
 constexpr uint32_t kResponseMagic = 0x52504C53;  // SLPR
 constexpr uint32_t kSearchResMagic = 0x53524C53;  // SLRS
-constexpr uint32_t kIpcMagic = 0x51504C53;        // SLPQ (same as request, version disambiguates)
+constexpr uint32_t kIpcMagic = 0x43504953;        // SIPC (IPC control channel)
 
 constexpr int kRequestVersion = 4;
 constexpr int kResponseVersion = 4;
@@ -102,6 +102,11 @@ inline int32_t ReadInt32LE(std::span<const uint8_t> src, size_t& offset) {
     return v;
 }
 
+inline int32_t ReadInt32LE(std::span<const uint8_t> src) {
+    size_t offset = 0;
+    return ReadInt32LE(src, offset);
+}
+
 inline void WriteUInt64LE(std::span<uint8_t> dest, uint64_t value) {
     for (int i = 0; i < 8; ++i) dest[i] = static_cast<uint8_t>(value >> (i * 8));
 }
@@ -113,12 +118,22 @@ inline uint64_t ReadUInt64LE(std::span<const uint8_t> src, size_t& offset) {
     return v;
 }
 
+inline uint64_t ReadUInt64LE(std::span<const uint8_t> src) {
+    size_t offset = 0;
+    return ReadUInt64LE(src, offset);
+}
+
 inline void WriteInt64LE(std::span<uint8_t> dest, int64_t value) {
     WriteUInt64LE(dest, static_cast<uint64_t>(value));
 }
 
 inline int64_t ReadInt64LE(std::span<const uint8_t> src, size_t& offset) {
     return static_cast<int64_t>(ReadUInt64LE(src, offset));
+}
+
+inline int64_t ReadInt64LE(std::span<const uint8_t> src) {
+    size_t offset = 0;
+    return ReadInt64LE(src, offset);
 }
 
 inline void WriteUInt32LE(std::span<uint8_t> dest, uint32_t value) {
@@ -135,6 +150,11 @@ inline uint32_t ReadUInt32LE(std::span<const uint8_t> src, size_t& offset) {
                   (static_cast<uint32_t>(src[offset + 3]) << 24);
     offset += 4;
     return v;
+}
+
+inline uint32_t ReadUInt32LE(std::span<const uint8_t> src) {
+    size_t offset = 0;
+    return ReadUInt32LE(src, offset);
 }
 
 } // namespace swiftlist::pipe

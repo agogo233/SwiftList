@@ -3,6 +3,7 @@
 #include "pipe/wire_format.h"
 
 #include <cstdint>
+#include <memory>
 #include <string>
 #include <vector>
 
@@ -38,10 +39,10 @@ struct SearchRequestMessage {
     std::string Query;
     std::string DirectoryFilter;
     std::string Drive;
-    MachineSettings* MachineSettingsPtr = nullptr;
-    std::vector<std::string>* DisabledAliasComponents = nullptr;
-    std::vector<std::string>* FilePaths = nullptr;
-    std::vector<std::string>* Directories = nullptr;
+    std::unique_ptr<MachineSettings> MachineSettingsPtr;
+    std::unique_ptr<std::vector<std::string>> DisabledAliasComponents;
+    std::unique_ptr<std::vector<std::string>> FilePaths;
+    std::unique_ptr<std::vector<std::string>> Directories;
     int32_t MaxAgeMinutes = 0;
     bool RequestElevation = false;
 };

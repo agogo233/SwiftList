@@ -97,4 +97,19 @@ bool DeltaOverlay::IsEmpty() const {
     return m_added.empty() && m_overrides.empty() && m_deleted.empty();
 }
 
+std::vector<DeltaRecord> DeltaOverlay::AddedRecords() const {
+    std::lock_guard<std::mutex> lock(m_mutex);
+    return m_added;
+}
+
+std::unordered_map<int, DeltaRecord> DeltaOverlay::Overrides() const {
+    std::lock_guard<std::mutex> lock(m_mutex);
+    return m_overrides;
+}
+
+std::unordered_set<int> DeltaOverlay::DeletedBaseRows() const {
+    std::lock_guard<std::mutex> lock(m_mutex);
+    return m_deleted;
+}
+
 } // namespace swiftlist::index_v2

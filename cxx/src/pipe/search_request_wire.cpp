@@ -72,7 +72,7 @@ void WriteSearchRequest(std::vector<uint8_t>& buf,
         WriteInt32LE(std::span<uint8_t>(buf.data() + o, 4), msg.Limit);
         WriteInt32LE(std::span<uint8_t>(buf.data() + o + 4, 4), msg.AppLimit);
         WriteString(buf, msg.Query);
-        WriteStringList(buf, msg.DisabledAliasComponents);
+        WriteStringList(buf, msg.DisabledAliasComponents.get());
         break;
     }
     case SearchRequestId::SearchDir: {
@@ -82,18 +82,18 @@ void WriteSearchRequest(std::vector<uint8_t>& buf,
         WriteInt32LE(std::span<uint8_t>(buf.data() + o + 4, 4), msg.AppLimit);
         WriteString(buf, msg.DirectoryFilter);
         WriteString(buf, msg.Query);
-        WriteStringList(buf, msg.DisabledAliasComponents);
+        WriteStringList(buf, msg.DisabledAliasComponents.get());
         break;
     }
     case SearchRequestId::GetFileMetadata:
-        WriteStringList(buf, msg.FilePaths);
+        WriteStringList(buf, msg.FilePaths.get());
         break;
     case SearchRequestId::GetRecentFiles: {
         auto o = buf.size();
         buf.resize(o + 8);
         WriteInt32LE(std::span<uint8_t>(buf.data() + o, 4), msg.Limit);
         WriteInt32LE(std::span<uint8_t>(buf.data() + o + 4, 4), msg.MaxAgeMinutes);
-        WriteStringList(buf, msg.Directories);
+        WriteStringList(buf, msg.Directories.get());
         break;
     }
     case SearchRequestId::LaunchHook:
@@ -117,7 +117,7 @@ bool ReadSearchRequest(const uint8_t* payload, size_t len,
 
     switch (msg.Id) {
     case SearchRequestId::SetMachineSettings:
-        msg.MachineSettingsPtr = new MachineSettings(
+        msg.MachineSettingsPtr = std::make_unique<MachineSettings>(
             ReadMachineSettings(payload, offset, len));
         break;
     case SearchRequestId::RebuildDrive:
@@ -130,7 +130,7 @@ bool ReadSearchRequest(const uint8_t* payload, size_t len,
         msg.AppLimit = ReadInt32LE(std::span<const uint8_t>(payload + offset + 4, 4));
         offset += 8;
         msg.Query = ReadString(std::span<const uint8_t>(payload + offset, len - offset), offset);
-        msg.DisabledAliasComponents = new std::vector<std::string>(
+        msg.DisabledAliasComponents = std::make_unique<std::vector<std::string>>(
             ReadStringList(payload, offset, len));
         break;
     case SearchRequestId::SearchDir:
@@ -140,11 +140,11 @@ bool ReadSearchRequest(const uint8_t* payload, size_t len,
         offset += 8;
         msg.DirectoryFilter = ReadString(std::span<const uint8_t>(payload + offset, len - offset), offset);
         msg.Query = ReadString(std::span<const uint8_t>(payload + offset, len - offset), offset);
-        msg.DisabledAliasComponents = new std::vector<std::string>(
+        msg.DisabledAliasComponents = std::make_unique<std::vector<std::string>>(
             ReadStringList(payload, offset, len));
         break;
     case SearchRequestId::GetFileMetadata:
-        msg.FilePaths = new std::vector<std::string>(
+        msg.FilePaths = std::make_unique<std::vector<std::string>>(
             ReadStringList(payload, offset, len));
         break;
     case SearchRequestId::GetRecentFiles:
@@ -152,7 +152,7 @@ bool ReadSearchRequest(const uint8_t* payload, size_t len,
         msg.Limit = ReadInt32LE(std::span<const uint8_t>(payload + offset, 4));
         msg.MaxAgeMinutes = ReadInt32LE(std::span<const uint8_t>(payload + offset + 4, 4));
         offset += 8;
-        msg.Directories = new std::vector<std::string>(
+        msg.Directories = std::make_unique<std::vector<std::string>>(
             ReadStringList(payload, offset, len));
         break;
     case SearchRequestId::LaunchHook:

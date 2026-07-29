@@ -1,6 +1,7 @@
 #include "app/search_view_model.h"
 
-#include <sstream>
+#define WIN32_LEAN_AND_MEAN
+#include <Windows.h>
 
 namespace swiftlist::app {
 
@@ -17,16 +18,15 @@ void SearchViewModel::SetPipeName(const std::wstring& name) {
     pipeName_ = name;
 }
 
-void SearchViewModel::SetOnResults(ResultsFn cb) {
-    onResults_ = std::move(cb);
-}
-
 void SearchViewModel::SetDebounceMs(uint32_t ms) {
     debounceMs_ = ms;
 }
 
+void SearchViewModel::SetWindow(HWND hwnd) {
+    hwnd_ = hwnd;
+}
+
 void SearchViewModel::OnQueryChanged(const std::wstring& query) {
-    std::ostringstream nullGuard;
     pendingQuery_ = query;
     lastChange_ = std::chrono::steady_clock::now();
     queryDirty_ = true;
@@ -70,15 +70,29 @@ void SearchViewModel::DebounceLoop() {
 
 void SearchViewModel::ExecuteSearch(const std::wstring& query) {
     PipeClientWrapper client;
+    auto* results = new std::vector<AppSearchResult>();
     if (!client.Connect(pipeName_)) {
-        if (onResults_) onResults_({});
+        if (hwnd_) {
+            if (!PostMessageW(hwnd_, kResultsMessage, 0,
+                              reinterpret_cast<LPARAM>(results))) {
+                delete results;
+            }
+        } else {
+            delete results;
+        }
         return;
     }
 
     client.SendSearch(query, 50);
+    *results = client.LastResults();
 
-    if (onResults_) {
-        onResults_(client.LastResults());
+    if (hwnd_) {
+        if (!PostMessageW(hwnd_, kResultsMessage, 0,
+                          reinterpret_cast<LPARAM>(results))) {
+            delete results;
+        }
+    } else {
+        delete results;
     }
 }
 

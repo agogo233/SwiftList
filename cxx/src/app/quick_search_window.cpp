@@ -5,11 +5,7 @@
 
 namespace swiftlist::app {
 
-QuickSearchWindow::QuickSearchWindow() {
-    viewModel_.SetOnResults([this](const std::vector<AppSearchResult>& results) {
-        SetResults(results);
-    });
-}
+QuickSearchWindow::QuickSearchWindow() = default;
 
 void QuickSearchWindow::ShowCentered() {
     int screenW = GetSystemMetrics(SM_CXSCREEN);
@@ -21,6 +17,8 @@ void QuickSearchWindow::ShowCentered() {
 
     Create(L"", x, y, w, h,
            WS_POPUP, WS_EX_TOPMOST | WS_EX_TOOLWINDOW | WS_EX_LAYERED);
+
+    viewModel_.SetWindow(Handle());
 
     SetLayeredWindowAttributes(hwnd_, 0, 240, LWA_ALPHA);
 
@@ -48,6 +46,12 @@ void QuickSearchWindow::SetResults(const std::vector<AppSearchResult>& results) 
 }
 
 LRESULT QuickSearchWindow::WndProc(UINT msg, WPARAM wParam, LPARAM lParam) {
+    if (msg == SearchViewModel::kResultsMessage) {
+        auto* results = reinterpret_cast<std::vector<AppSearchResult>*>(lParam);
+        SetResults(*results);
+        delete results;
+        return 0;
+    }
     switch (msg) {
     case WM_KEYDOWN:
         OnKeyDown(wParam);

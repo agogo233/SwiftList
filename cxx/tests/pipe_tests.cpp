@@ -119,7 +119,7 @@ TEST(SearchRequestWireTest, SearchRoundTrip) {
     original.AppLimit = 10;
     original.Query = "test query";
     std::vector<std::string> disabled = {"comp1", "comp2"};
-    original.DisabledAliasComponents = &disabled;
+    original.DisabledAliasComponents = std::make_unique<std::vector<std::string>>(disabled);
 
     std::vector<uint8_t> buf;
     WriteSearchRequest(buf, original);
@@ -140,8 +140,6 @@ TEST(SearchRequestWireTest, SearchRoundTrip) {
     ASSERT_EQ(decoded.DisabledAliasComponents->size(), 2);
     EXPECT_EQ((*decoded.DisabledAliasComponents)[0], "comp1");
     EXPECT_EQ((*decoded.DisabledAliasComponents)[1], "comp2");
-
-    delete decoded.DisabledAliasComponents;
 }
 
 TEST(SearchRequestWireTest, SearchDirRoundTrip) {
@@ -166,8 +164,6 @@ TEST(SearchRequestWireTest, SearchDirRoundTrip) {
     EXPECT_EQ(decoded.Limit, 100);
     EXPECT_EQ(decoded.DirectoryFilter, "C:\\Windows");
     EXPECT_EQ(decoded.Query, "file.txt");
-
-    delete decoded.DisabledAliasComponents;
 }
 
 TEST(SearchRequestWireTest, LaunchHookRoundTrip) {
