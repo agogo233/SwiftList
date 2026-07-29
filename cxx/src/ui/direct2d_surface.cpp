@@ -50,21 +50,22 @@ bool D2DSurface::CreateDeviceResources(HWND hwnd) {
 
     if (context_) return true;
 
-    RECT rc = {};
-    GetClientRect(hwnd, &rc);
-    D2DPixelSize size = {
-        static_cast<uint32_t>(rc.right - rc.left),
-        static_cast<uint32_t>(rc.bottom - rc.top)
-    };
+    // Create D3D device first, then DXGI device, then D2D device.
+    ComPtr<ID3D11Device> d3dDevice;
+    ComPtr<ID3D11DeviceContext> d3dContext;
+    D3D_FEATURE_LEVEL featureLevel;
+    HRESULT hr = D3D11CreateDevice(
+        nullptr, D3D_DRIVER_TYPE_HARDWARE, nullptr,
+        D3D11_CREATE_DEVICE_BGRA_SUPPORT,
+        nullptr, 0, D3D11_SDK_VERSION,
+        d3dDevice.GetAddressOf(), &featureLevel, d3dContext.GetAddressOf());
+    if (FAILED(hr)) return false;
 
-    D2D1_DEVICE_CONTEXT_OPTIONS deviceOptions = D2D1_DEVICE_CONTEXT_OPTIONS_NONE;
-#ifdef _DEBUG
-    deviceOptions = D2D1_DEVICE_CONTEXT_OPTIONS_ENABLE_MULTITHREADED_OPTIMIZATIONS;
-#endif
+    ComPtr<IDXGIDevice1> dxgiDevice;
+    hr = d3dDevice.As(&dxgiDevice);
+    if (FAILED(hr)) return false;
 
-    HRESULT hr = factory_->CreateDevice(
-        DXGI_TYPE_IID_ARGS_DEFAULT,
-        device_.GetAddressOf());
+    hr = factory_->CreateDevice(dxgiDevice.Get(), device_.GetAddressOf());
     if (FAILED(hr)) return false;
 
     hr = device_->CreateDeviceContext(deviceOptions, context_.GetAddressOf());
@@ -111,7 +112,7 @@ bool D2DSurface::CreateDeviceResources(HWND hwnd) {
 
     D2D1_BITMAP_PROPERTIES1 bitmapProps = {};
     bitmapProps.pixelFormat.format = DXGI_FORMAT_B8G8R8A8_UNORM;
-    bitmapProps.pixelFormat.alphaMode = DXGI_ALPHA_MODE_PREMULTIPLIED;
+    bitmapProps.pixelFormat.alphaMode = D2D1_ALPHA_MODE_PREMULTIPLIED;
     bitmapProps.dpiX = dpiX_;
     bitmapProps.dpiY = dpiY_;
     bitmapProps.bitmapOptions = D2D1_BITMAP_OPTIONS_TARGET | D2D1_BITMAP_OPTIONS_CANNOT_DRAW;
@@ -150,7 +151,7 @@ void D2DSurface::Resize(uint32_t width, uint32_t height) {
 
     D2D1_BITMAP_PROPERTIES1 bitmapProps = {};
     bitmapProps.pixelFormat.format = DXGI_FORMAT_B8G8R8A8_UNORM;
-    bitmapProps.pixelFormat.alphaMode = DXGI_ALPHA_MODE_PREMULTIPLIED;
+    bitmapProps.pixelFormat.alphaMode = D2D1_ALPHA_MODE_PREMULTIPLIED;
     bitmapProps.dpiX = dpiX_;
     bitmapProps.dpiY = dpiY_;
     bitmapProps.bitmapOptions = D2D1_BITMAP_OPTIONS_TARGET | D2D1_BITMAP_OPTIONS_CANNOT_DRAW;

@@ -20,7 +20,7 @@ bool Window::Create(const std::wstring& title, int x, int y, int width, int heig
     wc.style = CS_HREDRAW | CS_VREDRAW;
     wc.lpfnWndProc = StaticWndProc;
     wc.hInstance = GetModuleHandleW(nullptr);
-    wc.hCursor = LoadCursorW(nullptr, IDC_ARROW);
+    wc.hCursor = LoadCursorW(nullptr, reinterpret_cast<LPCWSTR>(IDC_ARROW));
     wc.lpszClassName = L"SwiftListWindowClass";
 
     static bool registered = false;
@@ -73,10 +73,8 @@ void Window::SetExtendsIntoClientArea(const WindowInsets& insets) {
 void Window::EnableBlurBehind(bool enable) {
     if (!hwnd_) return;
 
-    DBE_BUFFER_SIZE size = {};
-    size.dwSize = sizeof(size);
-
     DWM_BLURBEHIND bb = {};
+    bb.dwSize = sizeof(bb);
     bb.dwFlags = DWM_BB_ENABLE | DWM_BB_BLURREGION;
     bb.fEnable = enable;
     bb.hRgnBlur = CreateRectRgn(0, 0, -1, -1);

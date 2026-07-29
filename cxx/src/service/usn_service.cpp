@@ -61,7 +61,7 @@ void WINAPI WinService::ServiceMain(DWORD /*argc*/, LPWSTR* /*argv*/) {
 DWORD WINAPI WinService::ServiceCtrlHandler(DWORD control, DWORD /*eventType*/,
                                               void* /*eventData*/,
                                               void* /*context*/) {
-    if (!instance_) return;
+    if (!instance_) return ERROR_SUCCESS;
 
     switch (control) {
     case SERVICE_CONTROL_STOP:
@@ -79,6 +79,8 @@ DWORD WINAPI WinService::ServiceCtrlHandler(DWORD control, DWORD /*eventType*/,
     default:
         break;
     }
+
+    return ERROR_SUCCESS;
 }
 
 void WinService::ReportStatus(DWORD currentState, DWORD waitHint) {

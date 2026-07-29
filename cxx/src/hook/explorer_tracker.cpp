@@ -1,7 +1,15 @@
 #include "hook/explorer_tracker.h"
 
-#include <exdisp.h>
 #include <shlobj.h>
+
+// ShellWindowConstants and ShellWindowFindWindowOptions from <exdisp.h>.
+// Defined here to avoid pulling in the full exdisp.h (heavy COM overhead).
+#ifndef SWC_DESKTOP
+#define SWC_DESKTOP 0x08
+#endif
+#ifndef SWFO_NEEDDISPLAY
+#define SWFO_NEEDDISPLAY 0x01
+#endif
 
 namespace swiftlist::hook {
 
