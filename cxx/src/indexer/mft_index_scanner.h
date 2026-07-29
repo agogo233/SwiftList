@@ -8,6 +8,8 @@
 
 namespace swiftlist::indexer {
 
+using index_v2::FileRecordInput;
+
 class MftIndexScanner {
 public:
     using Callback = std::function<void(const FileRecordInput&)>;

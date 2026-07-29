@@ -104,7 +104,9 @@ FzfMatchResult FzfMatcher::MatchV2(std::span<const uint8_t> chars,
                     if (bonuses[col] >= BonusBoundary && bonuses[col] > firstBonus) {
                         consScore = 1;
                     } else {
-                        bonuses[col] = std::max({bonuses[col], firstBonus, static_cast<int8_t>(BonusConsecutive)});
+                        bonuses[col] = std::max(bonuses[col],
+                                                  std::max(firstBonus,
+                                                           static_cast<int8_t>(BonusConsecutive)));
                     }
                 }
 
@@ -201,7 +203,8 @@ FzfMatchResult FzfMatcher::MatchV1(std::span<const uint8_t> chars,
                 if (bonus >= BonusBoundary && bonus > firstBonus) {
                     firstBonus = bonus;
                 }
-                bonus = std::max({bonus, firstBonus, BonusConsecutive});
+                bonus = std::max(bonus,
+                                    std::max(firstBonus, BonusConsecutive));
             }
 
             if (patIdx == 0) {

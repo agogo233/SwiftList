@@ -2,6 +2,8 @@
 #include "service/service_installer.h"
 #include "service/hook_mode_launcher.h"
 
+#include <objbase.h>
+
 #include <atomic>
 #include <csignal>
 #include <cstdio>

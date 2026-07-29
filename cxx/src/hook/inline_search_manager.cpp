@@ -5,6 +5,8 @@
 
 namespace swiftlist::hook {
 
+using pipe::HookEventType;
+
 InlineSearchManager::InlineSearchManager() = default;
 
 InlineSearchManager::~InlineSearchManager() = default;

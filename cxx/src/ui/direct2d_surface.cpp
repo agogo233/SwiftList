@@ -50,6 +50,18 @@ bool D2DSurface::CreateDeviceResources(HWND hwnd) {
 
     if (context_) return true;
 
+    RECT rc = {};
+    GetClientRect(hwnd, &rc);
+    D2DPixelSize size = {
+        static_cast<uint32_t>(rc.right - rc.left),
+        static_cast<uint32_t>(rc.bottom - rc.top)
+    };
+
+    D2D1_DEVICE_CONTEXT_OPTIONS deviceOptions = D2D1_DEVICE_CONTEXT_OPTIONS_NONE;
+#ifdef _DEBUG
+    deviceOptions = D2D1_DEVICE_CONTEXT_OPTIONS_ENABLE_MULTITHREADED_OPTIMIZATIONS;
+#endif
+
     // Create D3D device first, then DXGI device, then D2D device.
     ComPtr<ID3D11Device> d3dDevice;
     ComPtr<ID3D11DeviceContext> d3dContext;
@@ -84,10 +96,6 @@ bool D2DSurface::CreateDeviceResources(HWND hwnd) {
     swapChainDesc.BufferCount = 2;
     swapChainDesc.SwapEffect = DXGI_SWAP_EFFECT_FLIP_SEQUENTIAL;
     swapChainDesc.AlphaMode = DXGI_ALPHA_MODE_PREMULTIPLIED;
-
-    ComPtr<IDXGIDevice1> dxgiDevice;
-    hr = device_.As(&dxgiDevice);
-    if (FAILED(hr)) return false;
 
     ComPtr<IDXGIAdapter> adapter;
     hr = dxgiDevice->GetAdapter(adapter.GetAddressOf());

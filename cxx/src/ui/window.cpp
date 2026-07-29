@@ -74,7 +74,6 @@ void Window::EnableBlurBehind(bool enable) {
     if (!hwnd_) return;
 
     DWM_BLURBEHIND bb = {};
-    bb.dwSize = sizeof(bb);
     bb.dwFlags = DWM_BB_ENABLE | DWM_BB_BLURREGION;
     bb.fEnable = enable;
     bb.hRgnBlur = CreateRectRgn(0, 0, -1, -1);

@@ -8,6 +8,8 @@
 
 namespace swiftlist::indexer {
 
+using index_v2::FileRecordInput;
+
 enum class SourceKind : uint8_t {
     LocalMft = 1,
     NetworkMappedDrive = 2,
