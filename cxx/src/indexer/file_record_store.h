@@ -8,6 +8,7 @@
 
 namespace swiftlist::indexer {
 
+using index_v2::FileRecordFlags;
 using index_v2::FileRecordInput;
 
 enum class SourceKind : uint8_t {

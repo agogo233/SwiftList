@@ -2,6 +2,7 @@
 
 #include "indexer/journal_reader.h"
 #include "indexer/usn_record_parser.h"
+#include "indexer/volume_helper.h"
 #include "index_v2/live_index.h"
 
 #include <atomic>

@@ -3,6 +3,8 @@
 #include "hook/explorer_tracker.h"
 #include "hook/inline_search_manager.h"
 
+#include <objbase.h>
+
 #include <csignal>
 #include <cstdio>
 #include <string>
