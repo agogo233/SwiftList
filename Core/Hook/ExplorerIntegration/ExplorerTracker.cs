@@ -1,5 +1,4 @@
 using System.Text;
-using SwiftList.PluginSdk.Abstractions.Plugins;
 using SwiftList.PluginSdk.Registries;
 using SwiftList.PluginSdk.Abstractions.Plugins.WindowAdapters;
 namespace SwiftList.Core.Hook;
@@ -93,15 +92,14 @@ public class ExplorerTracker : IDisposable
     public event Action<string, bool>? OnPathCaptured;
     public event Action? OnActiveWindowMoved;
     public event Action<string>? OnError;
+    // ExplorerActivePathPoller calls this for the foreground window on every system-wide WinEvent it
+    // receives -- any window anywhere moving, resizing or renaming -- so it goes through
+    // ProcessNameResolver rather than Process.GetProcessById, which would enumerate every process on the
+    // machine and leave behind a finalizable object each time.
     internal string GetProcessName(IntPtr hwnd)
     {
-        try
-        {
-            ExplorerNativeHooks.GetWindowThreadProcessId(hwnd, out var pid);
-            if (pid != 0) return System.Diagnostics.Process.GetProcessById((int)pid).ProcessName;
-        }
-        catch { }
-        return "Unknown";
+        ExplorerNativeHooks.GetWindowThreadProcessId(hwnd, out var pid);
+        return ProcessNameResolver.GetNameWithoutExtension(pid);
     }
     public void UpdateActiveWindow(IntPtr hwnd, string title, string className, bool isDesktop)
     {
@@ -228,7 +226,7 @@ public class ExplorerTracker : IDisposable
             if (root == ExplorerNativeHooks.GetForegroundWindow())
                 _classifier.CheckActiveWindow(root);
         }
-        _pathPoller.Poll(this);
+        _pathPoller.Poll(this, eventType);
     }
     internal void Deactivate()
     {
@@ -238,7 +236,13 @@ public class ExplorerTracker : IDisposable
         LastPath = null;
         if (wasActive) OnExplorerDeactivated?.Invoke();
     }
-    public void Dispose() => Stop();
+    public void Dispose()
+    {
+        Stop();
+        // Only on Dispose, not in Stop: Stop/Start is a restart, and the poller's deferred-poll timer is
+        // owned for the tracker's whole life.
+        _pathPoller.Dispose();
+    }
     [System.Runtime.InteropServices.StructLayout(System.Runtime.InteropServices.LayoutKind.Sequential)]
     public struct RECT
     {

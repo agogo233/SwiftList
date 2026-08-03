@@ -14,7 +14,6 @@ public sealed class NetworkIndexStatus
     public string CachePath { get; set; } = string.Empty;
     public DateTime? LastUpdated { get; set; }
     public string Error { get; set; } = string.Empty;
-
     public NetworkIndexStatus Clone() => new()
     {
         Drive = Drive,

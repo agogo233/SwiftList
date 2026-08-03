@@ -13,13 +13,16 @@ internal sealed class TreeBuilder
 {
     internal const int RecordBatchSize = 256;
     internal const int ProgressBatchSize = 1024;
-    internal const int CheckpointBatchSize = 4096;
+    internal const int CheckpointBatchSize = 5120;
+    // See DoublingCheckpointGate's own header comment for why this doubling-with-cap scheme exists.
+    internal const int MaxCheckpointBatchSize = 524288;
+    internal readonly DoublingCheckpointGate _checkpointGate = new(CheckpointBatchSize, MaxCheckpointBatchSize);
     internal readonly FileRecordStore _store;
     private readonly string _root;
     private readonly string _physicalRoot;
     internal readonly WalkFilter _filter;
     internal readonly CancellationToken _token;
-    internal readonly Action<int> _onProgress;
+    internal readonly Action<int, int> _onProgress;
     internal readonly Action<FileRecordStore, NetworkDriveWalkStats>? _onCheckpoint;
     private readonly Channel<WorkItem> _pending;
     internal readonly object _recordsGate = new();
@@ -28,14 +31,16 @@ internal sealed class TreeBuilder
     private int _pendingDirectories;
     internal int _countSinceProgress;
     internal int _indexedItems;
+    // Live files/dirs split of _indexedItems, for progress display -- _indexedItems itself stays the
+    // single source of truth for the checkpoint threshold and the diagnostic log in Run().
+    internal int _indexedFiles;
+    internal int _indexedDirs;
     internal int _skippedItems;
     internal int _errors;
     internal int _enumerateErrors;
     internal int _attributeErrors;
     internal int _reparseSkipped;
     internal int _slowDirectories;
-    internal int _countSinceCheckpoint;
-    internal int _checkpointInFlight;
     internal int _reusedDirectories;
 
     // Diff-aware reuse state (TreeBuilderDiffExtensions): reusing a directory's cached children instead
@@ -55,7 +60,7 @@ internal sealed class TreeBuilder
         string physicalRoot,
         WalkOptions options,
         CancellationToken token,
-        Action<int> onProgress,
+        Action<int, int> onProgress,
         Action<FileRecordStore, NetworkDriveWalkStats>? onCheckpoint = null,
         TreeDiffBaseline? diffBaseline = null,
         bool recheckExclusions = false)
@@ -172,6 +177,7 @@ internal sealed class TreeBuilder
                 FlushRecords(batch);
 
             var indexedItems = Interlocked.Increment(ref _indexedItems);
+            if (isDirectory) Interlocked.Increment(ref _indexedDirs); else Interlocked.Increment(ref _indexedFiles);
 
             if (isDirectory && _filter.ShouldDescend(logicalFullPath, record.Attributes, current.Depth + 1, ignoreRules))
             {
@@ -180,13 +186,13 @@ internal sealed class TreeBuilder
                 // happens, silently leaving it un-Listed forever. Flush now so the child's own record is
                 // registered before anyone else can possibly touch it.
                 FlushRecords(batch);
-                EnqueueDirectory(child, logicalFullPath, record.Id, current.Depth + 1, ignoreRules);
+                EnqueueDirectory(child, logicalFullPath, record.Id, current.Depth + 1, ignoreRules, current.Ancestors);
             }
 
             if (Interlocked.Increment(ref _countSinceProgress) >= ProgressBatchSize)
             {
                 Interlocked.Exchange(ref _countSinceProgress, 0);
-                _onProgress(indexedItems);
+                _onProgress(Volatile.Read(ref _indexedFiles), Volatile.Read(ref _indexedDirs));
             }
 
             this.MaybeCheckpoint(indexedItems);
@@ -219,8 +225,49 @@ internal sealed class TreeBuilder
 
     // parentId here is this directory's OWN id (becomes WorkItem.LocalId), not its parent's -- matches the
     // naming TryCreateRecord's callers already use when they pass record.Id through as this parameter.
-    internal void EnqueueDirectory(string path, string logicalPath, UInt128 parentId, int depth, NetworkIgnoreRuleSet ignoreRules)
+    internal void EnqueueDirectory(string path, string logicalPath, UInt128 parentId, int depth, NetworkIgnoreRuleSet ignoreRules, AncestorNode? parentAncestors = null)
     {
+        if (depth > 128)
+        {
+            Interlocked.Increment(ref _reparseSkipped);
+            Interlocked.Increment(ref _skippedItems);
+            return;
+        }
+
+        var normalizedPath = PathHelpers.NormalizePath(path, true).TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
+
+        if (parentAncestors != null)
+        {
+            if (parentAncestors.Contains(normalizedPath))
+            {
+                Interlocked.Increment(ref _reparseSkipped);
+                Interlocked.Increment(ref _skippedItems);
+                return;
+            }
+
+            try
+            {
+                var resolvedTarget = Directory.ResolveLinkTarget(path, returnFinalTarget: true);
+                if (resolvedTarget != null && parentAncestors.Contains(resolvedTarget.FullName))
+                {
+                    Interlocked.Increment(ref _reparseSkipped);
+                    Interlocked.Increment(ref _skippedItems);
+                    return;
+                }
+            }
+            catch
+            {
+            }
+        }
+
+        var nextAncestors = new AncestorNode(normalizedPath, parentAncestors);
+        if (nextAncestors.HasSegmentCycle())
+        {
+            Interlocked.Increment(ref _reparseSkipped);
+            Interlocked.Increment(ref _skippedItems);
+            return;
+        }
+
         // Last-resort guard against processing the same directory twice in one run: a corrupted diff
         // baseline (e.g. a duplicate row left by some earlier bug) could otherwise get a directory enqueued
         // more than once, and each duplicate walks or copies its entire subtree again -- compounding into
@@ -236,7 +283,7 @@ internal sealed class TreeBuilder
         Interlocked.Increment(ref _pendingDirectories);
         try
         {
-            _pending.Writer.WriteAsync(new WorkItem(path, logicalPath, parentId, depth, ignoreRules), _token)
+            _pending.Writer.WriteAsync(new WorkItem(path, logicalPath, parentId, depth, ignoreRules, nextAncestors), _token)
                 .AsTask()
                 .GetAwaiter()
                 .GetResult();

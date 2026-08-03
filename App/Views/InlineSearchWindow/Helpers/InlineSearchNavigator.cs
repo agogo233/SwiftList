@@ -1,9 +1,8 @@
 using System.IO;
 using System.Runtime.InteropServices;
 using SwiftList.App.Services;
-using SwiftList.Core;
-using SwiftList.Core.Hook;
 using SwiftList.App.Services.Plugin;
+using SwiftList.Core;
 using SwiftList.Core.Wire;
 using SwiftList.Core.Hook.Commands;
 namespace SwiftList.App.Views.InlineSearchWindow.Helpers;
@@ -87,7 +86,8 @@ public static class InlineSearchNavigator
     private static void OpenPathFromInline(this SwiftList.App.InlineSearchWindow window, string path, bool asAdmin, bool? isDir, bool forceRealOpen = false)
     {
         var tracker = window.Manager.ExplorerTracker;
-        if (!forceRealOpen && !asAdmin && isDir.HasValue && path != "__SHOW_MORE__" && tracker.ActiveInlineAdapter != null && tracker.ActiveHwnd != IntPtr.Zero && App.HookClient?.IsConnected == true)
+        if (!forceRealOpen && !asAdmin && isDir.HasValue && path != "__SHOW_MORE__" && tracker.ActiveInlineAdapter != null && tracker.ActiveHwnd != IntPtr.Zero && App.HookClient?.IsConnected == true
+            && !OpeningAFolderBelongsToTheFileManager(tracker.IsDesktop, isDir == true, UserSettings.Load().DefaultFileManager))
         {
             // Captured once here, before HideWindow(), and reused below instead of reading
             // tracker.ActiveHwnd again afterward: hiding the window can itself cause the tracker to
@@ -121,7 +121,7 @@ public static class InlineSearchNavigator
             // thread automatically via WPF's SynchronizationContext, so touching window/UI state here is
             // safe -- the window is already hidden by this point either way.
             _ = InlineAdapterIpcCoordinator.RunAfterLateResultAsync(lateResult,
-                onSuccess: () => { window.Manager.IsExecuting = false; },
+                onSuccess: () => window.Manager.IsExecuting = false,
                 onFallback: () => { window.Manager.IsExecuting = false; window.RunFallbackChain(path, asAdmin, isDir, forceRealOpen); });
             return;
         }
@@ -129,23 +129,58 @@ public static class InlineSearchNavigator
         window.RunFallbackChain(path, asAdmin, isDir, forceRealOpen);
     }
 
+    /// <summary>
+    /// Whether asking the host to go to a folder would really be OPENING it, and so belongs to the
+    /// configured default file manager instead.
+    /// </summary>
+    /// <remarks>
+    /// The desktop matches the Explorer adapter like any Explorer window does (Progman/WorkerW, see
+    /// ExplorerInlineSearchAdapter.CanHandle), but unlike one it has nothing to navigate in place --
+    /// Explorer answers by opening a brand new window, which is precisely the act
+    /// "open folders with a third-party file manager" exists to redirect. Inside a real Explorer window
+    /// the shortcut stays: navigating the window the user is already standing in is the point of inline
+    /// search, not an open.
+    ///
+    /// The same rule already guards the other shortcut of this kind
+    /// (ExplorerLocateHelper.TryLocateInExistingExplorer, which refuses outright when the setting is on).
+    /// This one never had it, so a folder opened from the desktop went to Explorer -- and only sometimes,
+    /// since an adapter call that timed out fell through to the fallback chain, which does honour it.
+    /// </remarks>
+    internal static bool OpeningAFolderBelongsToTheFileManager(bool isDesktop, bool isDir, DefaultFileManagerSetting? fileManager)
+        => isDesktop && isDir && fileManager is { Enabled: true } && !string.IsNullOrWhiteSpace(fileManager.Path);
+
     private static void RunFallbackChain(this SwiftList.App.InlineSearchWindow window, string path, bool asAdmin, bool? isDir, bool forceRealOpen = false)
     {
         var tracker = window.Manager.ExplorerTracker;
 
         if (!forceRealOpen && path != "__SHOW_MORE__" && tracker.IsExplorerOrDesktopActive && tracker.IsActiveWindowDialog && tracker.ActiveHwnd != IntPtr.Zero)
         {
-            App.HookClient?.SendMessage(new IpcMessage
+            // Only a folder-only target (WinRAR/Bandizip's own "extract to" field, see
+            // IFileDialogAdapter.TargetIsFolderOnly) needs a picked FILE resolved to its containing folder
+            // first -- an Open/Save dialog's filename box (ClassicFileDialogAdapter/StandardFileDialogAdapter)
+            // wants the exact path unchanged, same as it always has. Resolved here, in the App process
+            // rather than the adapter's own NavigateTo, since that runs in the elevated Hook process (see
+            // InlineAdapterCommandHandler's own comment on why) -- this process can actually tell file from
+            // folder reliably, including for a network drive the interactive user mapped without elevation.
+            // isDir == null (a stale result whose file no longer exists) is treated the same as a file, not
+            // a directory, for the identical reason.
+            var dialogTarget = tracker.ActiveAdapter?.TargetIsFolderOnly == true && isDir != true
+                ? Path.GetDirectoryName(path)
+                : path;
+            if (!string.IsNullOrEmpty(dialogTarget))
             {
-                Id = IpcMessageId.NavigateDialog,
-                Hwnd = tracker.ActiveHwnd.ToInt64(),
-                StringVal1 = path
+                App.HookClient?.SendMessage(new IpcMessage
+                {
+                    Id = IpcMessageId.NavigateDialog,
+                    Hwnd = tracker.ActiveHwnd.ToInt64(),
+                    StringVal1 = dialogTarget
 
-            });
+                });
 
-            window.UpdateSearchDisplay(string.Empty);
-            window.HideWindow();
-            return;
+                window.UpdateSearchDisplay(string.Empty);
+                window.HideWindow();
+                return;
+            }
         }
 
         if (!forceRealOpen

@@ -1,4 +1,5 @@
 using SwiftList.Core.SearchIndex.Fzf;
+using SwiftList.PluginSdk.Abstractions.Plugins;
 
 namespace SwiftList.Core.SearchIndex;
 
@@ -55,30 +56,48 @@ internal static class HighlightMask
     {
         foreach (var set in pattern.TermSets)
         {
-            // First non-inverse term in the set that actually matches -- mirrors FzfPattern's own
-            // "first successful term wins" per-set semantics (see TryMatchSingle's `best`).
+            // Highlight EVERY non-inverse term in the set that actually matches this candidate, not
+            // just whichever one happens to be tried first -- a candidate containing more than one of a
+            // multi-term OR set's terms (e.g. "我爱我家" containing both "我" and "爱" from "我 | 爱 |
+            // 你") shows the union of all of them, matching what a user scanning the OR query visually
+            // expects to see lit up, not just an arbitrary single winner.
             foreach (var term in set.Terms)
             {
-                if (term.Inverse)
+                // An alias provider's rewriting of the user's term is for matching only. Its text is
+                // the provider's internal shape (pinyin plus syllable boundaries), which appears
+                // nowhere in the candidate, so the subsequence search below would spread it across the
+                // whole name and light up characters the user never described -- searching a folder by
+                // the pinyin of its first four characters lit up two more from the middle of the name.
+                // The typed term still reaches the same aliases through MarkViaAliasProviders.
+                if (term.Inverse || term.AliasForm)
                     continue;
 
-                MarkTerm(fullText, term.Text, term.CaseSensitive, highlights, ref materialized, slab);
-                break;
+                MarkTerm(fullText, term.Text, term.CaseSensitive, term.Kind, highlights, ref materialized, slab);
             }
         }
     }
 
-    private static void MarkTerm(ReadOnlySpan<char> fullText, string term, bool caseSensitive, Span<bool> highlights, ref string? materialized, FzfSlab slab)
+    private static void MarkTerm(ReadOnlySpan<char> fullText, string term, bool caseSensitive, FzfTermKind kind, Span<bool> highlights, ref string? materialized, FzfSlab slab)
     {
         var comparison = caseSensitive ? StringComparison.Ordinal : StringComparison.OrdinalIgnoreCase;
         if (MarkLiteralSpan(fullText, term, comparison, highlights))
             return;
 
-        if (FzfPositionMatcher.FuzzyMatchV2WithPositions(fullText, term, caseSensitive, FzfScoringScheme.Default, highlights, slab).IsMatch)
+        // Scattered positions are only ever what a fuzzy term matched on. Every other kind is built on
+        // FzfExactMatcher, which is IndexOf under the same two StringComparisons the literal pass above
+        // already used -- so if one of those matched at all, that pass found it, and reaching here means
+        // it did not match this text. Running the fuzzy search anyway lit characters the term had
+        // nothing to do with, and worse, returned before the alias tier below could be tried: a pinyin
+        // term that happened to be a subsequence of some Latin run in a long path was answered by that
+        // run instead of by the alias it actually matched.
+        if (kind == FzfTermKind.Fuzzy &&
+            FzfPositionMatcher.FuzzyMatchV2WithPositions(fullText, term, caseSensitive, FzfScoringScheme.Default, highlights, slab).IsMatch)
+        {
             return;
+        }
 
         materialized ??= fullText.ToString();
-        if (MarkViaAliasProviders(materialized, term, caseSensitive, highlights))
+        if (MarkViaAliasProviders(materialized, term, caseSensitive, kind, highlights))
             return;
 
         MarkViaMixedQuery(materialized, term, caseSensitive, highlights);
@@ -155,17 +174,64 @@ internal static class HighlightMask
     // camelCase/word-boundary structure for the real algorithm's bonus scoring to add value from -- so
     // paying its full DP cost per candidate measured slower overall than this simpler scan, for a mask
     // that (per real name/text) comes out effectively identical either way.
-    private static bool MarkViaAliasProviders(string text, string term, bool caseSensitive, Span<bool> highlights)
+    // The typed term plus a provider's own spellings of it. The rewritten forms are what actually
+    // appear in its aliases -- a term typed as one run of letters is not present verbatim in an alias
+    // that marks syllable boundaries -- so leaving them out means a pinyin search highlights nothing at
+    // all. They are only ever compared against THAT provider's aliases, and MapAliasToSourceIndices
+    // translates whatever matches (boundary characters included) back onto the original text.
+    //
+    // Cached because they depend on the term and the provider and nothing else, while this is reached
+    // once per CANDIDATE: ranking a CJK query re-segmented the same pinyin term for every one of the
+    // thousands of candidates in the refinement set, which was most of what that refinement cost.
+    [ThreadStatic]
+    private static Dictionary<(IAliasProvider Provider, string Term, bool CaseSensitive), string[]>? _probeCache;
+
+    private static string[] ProbesFor(IAliasProvider provider, string termLower, bool caseSensitive)
+    {
+        var cache = _probeCache ??= new Dictionary<(IAliasProvider, string, bool), string[]>();
+        var key = (provider, termLower, caseSensitive);
+        if (cache.TryGetValue(key, out var cached))
+            return cached;
+
+        var probes = new List<string> { termLower };
+        foreach (var form in provider.GetQueryForms(termLower))
+        {
+            if (!string.IsNullOrEmpty(form))
+                probes.Add(caseSensitive ? form : form.ToLowerInvariant());
+        }
+
+        // Bounded rather than grown forever: a session types a lot of distinct terms, and only the
+        // handful in the query being ranked right now is ever read again.
+        if (cache.Count >= 64)
+            cache.Clear();
+        return cache[key] = probes.ToArray();
+    }
+
+    private static bool MarkViaAliasProviders(string text, string term, bool caseSensitive, FzfTermKind kind, Span<bool> highlights)
     {
         var termLower = caseSensitive ? term : term.ToLowerInvariant();
+        // Both of the ways a provider can be switched off, because neither works in both processes.
+        // GetActiveProviders consults a filter that reads the user's settings, which only the UI process
+        // can do -- the service runs under an account whose LocalApplicationData is not the user's, so
+        // it sees an empty settings file and considers everything enabled. What reaches the service is
+        // the per-request id set below, carried over the pipe. Matching already honours that set (it
+        // reads the ids baked into the snapshot); this, which generates aliases from the provider
+        // directly, did not -- so a disabled provider still shaped the ranking weight and lit up
+        // characters in the result the user never typed.
+        var disabledIds = SearchContext.DisabledAliasIds;
 
         foreach (var provider in AliasProviderRegistry.GetActiveProviders())
         {
             var matchedAny = false;
             try
             {
+                if (disabledIds != null && disabledIds.Contains(AliasProviderRegistry.GetProviderId(provider)))
+                    continue;
+
                 if (!provider.CanHandle(text))
                     continue;
+
+                var probes = ProbesFor(provider, termLower, caseSensitive);
 
                 foreach (var aliasGroup in provider.GetAliases(text))
                 {
@@ -178,7 +244,25 @@ internal static class HighlightMask
                             continue;
 
                         var aliasLower = caseSensitive ? alias : alias.ToLowerInvariant();
-                        var positions = FindSubsequencePositions(aliasLower, termLower);
+                        // Follow the same rule matching does -- which is this TERM's kind, not the
+                        // fuzzy setting. Reading the setting instead was right until a "'" was
+                        // involved, since that flips one term's exactness against it: with fuzzy off,
+                        // "'abc" searches as a subsequence but was highlighted as a contiguous run,
+                        // found nothing, and lit up nothing at all while the row itself was a hit.
+                        //
+                        // Contiguous for every other kind, because a scattered subsequence lights up
+                        // characters that had nothing to do with the hit: "gsh" matches 格式化 through
+                        // the initials alias, but a subsequence search also finds g...s...h spread
+                        // across the full pinyin and lit 创 along with it.
+                        int[]? positions = null;
+                        foreach (var probe in probes)
+                        {
+                            positions = kind == FzfTermKind.Fuzzy
+                                ? FindSubsequencePositions(aliasLower, probe)
+                                : FindContiguousPositions(aliasLower, probe);
+                            if (positions != null)
+                                break;
+                        }
                         if (positions == null)
                             continue;
 
@@ -261,6 +345,23 @@ internal static class HighlightMask
             searchFrom = idx + 1;
         }
 
+        return positions;
+    }
+
+    // Contiguous counterpart of the walk above, for when matching itself demands a contiguous run.
+    // Only the first occurrence is reported: the mask is a union anyway, so every occurrence is an
+    // equally good explanation of the same hit.
+    private static int[]? FindContiguousPositions(string text, string term)
+    {
+        if (term.Length == 0)
+            return null;
+        var idx = text.IndexOf(term, StringComparison.Ordinal);
+        if (idx < 0)
+            return null;
+
+        var positions = new int[term.Length];
+        for (var i = 0; i < term.Length; i++)
+            positions[i] = idx + i;
         return positions;
     }
 }

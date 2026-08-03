@@ -103,7 +103,7 @@ public sealed class UsnServicePipeServer : IDisposable
                     if (verboseLog)
                         Logger.Log($"[PipeServer] Request received: {request.Id}", LogLevel.Debug);
 
-                    if (request.Id == SearchRequestId.Search || request.Id == SearchRequestId.SearchDir)
+                    if (request.Id is SearchRequestId.Search or SearchRequestId.SearchDir or SearchRequestId.EnumerateDir)
                     {
                         await SearchStreamPump.RunAsync(_engine, request, pipe, token);
                         if (verboseLog)
@@ -114,6 +114,12 @@ public sealed class UsnServicePipeServer : IDisposable
                     if (request.Id == SearchRequestId.SubscribeStatus)
                     {
                         await StreamStatusUpdatesAsync(pipe, token).ConfigureAwait(false);
+                        continue;
+                    }
+
+                    if (request.Id == SearchRequestId.SubscribeDirectoryChanges)
+                    {
+                        await DirectoryChangeSubscription.ServeAsync(pipe, _engine, request.Directories, token).ConfigureAwait(false);
                         continue;
                     }
 
@@ -131,7 +137,7 @@ public sealed class UsnServicePipeServer : IDisposable
                         break;
                     }
 
-                    var response = ProcessClientRequest(request, token);
+                    var response = UsnServicePipeRequestProcessor.Process(_engine, request, token);
 
                     if (verboseLog)
                         Logger.Log($"[PipeServer] Sending response: {response.Kind}...", LogLevel.Debug);
@@ -162,16 +168,31 @@ public sealed class UsnServicePipeServer : IDisposable
 
     private async Task StreamStatusUpdatesAsync(NamedPipeServerStream pipe, CancellationToken token)
     {
-        if (_engine == null)
+        // Held in a local for the whole subscription. This loop lives as long as the client stays
+        // subscribed and spends nearly all of it parked on the wait below, while Stop() cancels the
+        // token and then clears the field -- so by the time the wait resumes on a pool thread, the
+        // field is routinely already null. Reading it again after any await, and above all in the
+        // finally that every exit path runs through, made shutting the service down terminate it with
+        // a NullReferenceException instead. The subscription belongs to the engine it was made on
+        // anyway, not to whatever the field happens to hold when it is torn down.
+        var engine = _engine;
+        if (engine == null)
             return;
 
         var signal = new SemaphoreSlim(0);
-        void Handler(Indexer.Usn.UsnIndexer.IndexerStatus _) => signal.Release();
+
+        void Handler(Indexer.Usn.UsnIndexer.IndexerStatus _)
+        {
+            // Unsubscribing does not wait for a handler already running on the indexer's thread, so
+            // one can still arrive between the removal below and the dispose that follows it.
+            try { signal.Release(); }
+            catch (ObjectDisposedException) { }
+        }
 
         try
         {
-            _engine.StatusChanged += Handler;
-            await PipeResponseBinarySerializer.WriteStatusAsync(pipe, _engine.GetStatus(), token).ConfigureAwait(false);
+            engine.StatusChanged += Handler;
+            await PipeResponseBinarySerializer.WriteStatusAsync(pipe, engine.GetStatus(), token).ConfigureAwait(false);
 
             while (!token.IsCancellationRequested && pipe.IsConnected)
             {
@@ -179,7 +200,7 @@ public sealed class UsnServicePipeServer : IDisposable
                 if (!pipe.IsConnected)
                     break;
 
-                await PipeResponseBinarySerializer.WriteStatusAsync(pipe, _engine.GetStatus(), token).ConfigureAwait(false);
+                await PipeResponseBinarySerializer.WriteStatusAsync(pipe, engine.GetStatus(), token).ConfigureAwait(false);
             }
         }
         catch (Exception ex) when (IsClientDisconnect(ex) || ex is OperationCanceledException)
@@ -187,97 +208,8 @@ public sealed class UsnServicePipeServer : IDisposable
         }
         finally
         {
-            _engine.StatusChanged -= Handler;
+            engine.StatusChanged -= Handler;
             signal.Dispose();
-        }
-    }
-
-    private PipeResponse ProcessClientRequest(SearchRequestMessage msg, CancellationToken token)
-    {
-        try
-        {
-            token.ThrowIfCancellationRequested();
-            switch (msg.Id)
-            {
-                case SearchRequestId.Ping:
-                    return new PipeResponse { Kind = PipeResponseKind.Ok };
-
-                case SearchRequestId.Status:
-                    var status = _engine?.GetStatus();
-                    return new PipeResponse
-                    {
-                        Kind = PipeResponseKind.Status,
-                        Status = status ?? new Indexer.Usn.UsnIndexer.IndexerStatus { State = "error" }
-                    };
-
-                case SearchRequestId.Rebuild:
-                    Logger.Log("[UsnService] Received REBUILD request from client.");
-                    _engine?.InitializeOrLoadIndex(true);
-                    return new PipeResponse { Kind = PipeResponseKind.Ok };
-
-                case SearchRequestId.Initialize:
-                    Logger.Log("[UsnService] Received INITIALIZE request from client.");
-                    _engine?.InitializeOrLoadIndex(false);
-                    return new PipeResponse { Kind = PipeResponseKind.Ok };
-
-                case SearchRequestId.RebuildDrive:
-                    var drive = msg.Drive ?? string.Empty;
-                    Logger.Log($"[UsnService] Received REBUILD_DRIVE request from client: {drive}");
-                    return _engine?.RebuildDriveIndex(drive) == true
-                        ? new PipeResponse { Kind = PipeResponseKind.Ok }
-                        : new PipeResponse { Kind = PipeResponseKind.Error, Message = "Invalid or disabled drive" };
-
-                case SearchRequestId.DeleteDriveIndex:
-                    var deleteDrive = msg.Drive ?? string.Empty;
-                    Logger.Log($"[UsnService] Received DELETE_DRIVE_INDEX request from client: {deleteDrive}");
-                    return _engine?.DeleteDriveIndex(deleteDrive) == true
-                        ? new PipeResponse { Kind = PipeResponseKind.Ok }
-                        : new PipeResponse { Kind = PipeResponseKind.Error, Message = "Invalid drive" };
-
-                case SearchRequestId.GetMachineSettings:
-                    return new PipeResponse
-                    {
-                        Kind = PipeResponseKind.MachineSettings,
-                        MachineSettings = _engine?.GetMachineSettings() ?? new MachineSettings()
-                    };
-
-                case SearchRequestId.SetMachineSettings:
-                    var settings = msg.MachineSettings;
-                    if (settings == null)
-                        return new PipeResponse { Kind = PipeResponseKind.Error, Message = "Invalid settings" };
-                    Logger.Log("[UsnService] Received SET_MACHINE_SETTINGS request.");
-                    _engine?.UpdateMachineSettings(settings);
-                    return new PipeResponse { Kind = PipeResponseKind.Ok };
-
-                case SearchRequestId.GetFileMetadata:
-                    var paths = msg.FilePaths ?? new List<string>();
-                    var metadata = _engine?.GetFileMetadataBatch(paths) ?? new Dictionary<string, FileMetadataEntry>();
-                    return new PipeResponse { Kind = PipeResponseKind.FileMetadata, FileMetadata = metadata };
-
-                case SearchRequestId.GetRecentFiles:
-                    var directories = msg.Directories ?? new List<string>();
-                    var recentFiles = _engine?.GetRecentFiles(directories, msg.Limit, msg.MaxAgeMinutes) ?? new List<SearchResult>();
-                    return new PipeResponse { Kind = PipeResponseKind.RecentFiles, RecentFiles = recentFiles };
-
-                case SearchRequestId.ClearServiceLog:
-                    Logger.ClearCurrentLog();
-                    return new PipeResponse { Kind = PipeResponseKind.Ok };
-
-                case SearchRequestId.ClearPathCaches:
-                    _engine?.ClearPathCaches();
-                    return new PipeResponse { Kind = PipeResponseKind.Ok };
-            }
-
-            return new PipeResponse { Kind = PipeResponseKind.Error, Message = "Unknown command" };
-        }
-        catch (OperationCanceledException)
-        {
-            return new PipeResponse { Kind = PipeResponseKind.Error, Message = "Cancelled" };
-        }
-        catch (Exception ex)
-        {
-            Logger.Log($"[UsnService] Error processing request {msg.Id}: {ex.Message}", LogLevel.Error);
-            return new PipeResponse { Kind = PipeResponseKind.Error, Message = ex.Message };
         }
     }
 

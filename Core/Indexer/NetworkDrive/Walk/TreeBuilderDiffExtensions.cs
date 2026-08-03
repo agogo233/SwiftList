@@ -74,6 +74,7 @@ internal static class TreeBuilderDiffExtensions
                 builder.FlushRecords(batch);
 
             var indexedItems = Interlocked.Increment(ref builder._indexedItems);
+            if (isDirectory) Interlocked.Increment(ref builder._indexedDirs); else Interlocked.Increment(ref builder._indexedFiles);
 
             if (isDirectory && builder._filter.ShouldDescend(logicalFullPath, attributes, current.Depth + 1, ignoreRules))
             {
@@ -81,13 +82,13 @@ internal static class TreeBuilderDiffExtensions
                 // so this child's own record is in _indexById before another worker can dequeue it.
                 builder.FlushRecords(batch);
                 var physicalChildPath = Path.Combine(current.Path, child.Name);
-                builder.EnqueueDirectory(physicalChildPath, logicalFullPath, child.Id, current.Depth + 1, ignoreRules);
+                builder.EnqueueDirectory(physicalChildPath, logicalFullPath, child.Id, current.Depth + 1, ignoreRules, current.Ancestors);
             }
 
             if (Interlocked.Increment(ref builder._countSinceProgress) >= TreeBuilder.ProgressBatchSize)
             {
                 Interlocked.Exchange(ref builder._countSinceProgress, 0);
-                builder._onProgress(indexedItems);
+                builder._onProgress(Volatile.Read(ref builder._indexedFiles), Volatile.Read(ref builder._indexedDirs));
             }
 
             builder.MaybeCheckpoint(indexedItems);
@@ -147,17 +148,18 @@ internal static class TreeBuilderDiffExtensions
                 builder.FlushRecords(batch);
 
             var indexedItems = Interlocked.Increment(ref builder._indexedItems);
+            if (isDirectory) Interlocked.Increment(ref builder._indexedDirs); else Interlocked.Increment(ref builder._indexedFiles);
 
             if (isDirectory && builder._filter.ShouldDescend(logicalFullPath, record.Attributes, current.Depth + 1, ignoreRules))
             {
                 builder.FlushRecords(batch);
-                builder.EnqueueDirectory(entry, logicalFullPath, record.Id, current.Depth + 1, ignoreRules);
+                builder.EnqueueDirectory(entry, logicalFullPath, record.Id, current.Depth + 1, ignoreRules, current.Ancestors);
             }
 
             if (Interlocked.Increment(ref builder._countSinceProgress) >= TreeBuilder.ProgressBatchSize)
             {
                 Interlocked.Exchange(ref builder._countSinceProgress, 0);
-                builder._onProgress(indexedItems);
+                builder._onProgress(Volatile.Read(ref builder._indexedFiles), Volatile.Read(ref builder._indexedDirs));
             }
 
             builder.MaybeCheckpoint(indexedItems);

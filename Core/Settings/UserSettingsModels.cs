@@ -21,6 +21,18 @@ public class FolderIndexSetting
     public string RefreshMode { get; set; } = "Manual";
 }
 
+// Lets a user redirect "open this folder" (see FileExecutor.TryBuildDefaultFileManagerStartInfo) to an
+// arbitrary third-party file manager instead of the shell's own association -- e.g. GitHub issue #180.
+// Parameter is a command-line template where "%s"/"{}" expand to the folder path, already quoted --
+// same placeholder convention as CustomActions.DynamicActionProvider.RunMulti. The user must not wrap
+// the placeholder in their own quotes, since that would double up.
+public class DefaultFileManagerSetting
+{
+    public bool Enabled { get; set; }
+    public string Path { get; set; } = string.Empty;
+    public string Parameter { get; set; } = string.Empty;
+}
+
 /// <summary>Everything shown on the Hotkey Settings page, grouped under one object.</summary>
 public class HotkeyPageSettings
 {
@@ -42,6 +54,9 @@ public class HotkeyPageSettings
     /// <summary>Same flat format as <see cref="ToggleWindowHotkey"/>.</summary>
     public string QuickSwitchHotkey { get; set; } = "Ctrl+G";
 
+    // Held with 1-9 to jump straight to that result. The quick panel reuses this same modifier to
+    // switch between its workspace tabs -- one "hold this and press a number" key everywhere, rather
+    // than a second setting that would only ever be set to the same thing.
     public string SelectJumpModifier { get; set; } = "Ctrl";
     public string NextItemHotkey { get; set; } = "Ctrl+N";
     public string PreviousItemHotkey { get; set; } = "Ctrl+P";
@@ -60,14 +75,20 @@ public class HotkeyPageSettings
     // isn't user-configurable, matching the always-on scroll-to-navigate gesture.
     public string KeywordHistoryDeleteHotkey { get; set; } = "Ctrl+Delete";
 
-    // Cycles (wraps at both ends) through the Startup Panel's own tab strip -- see
-    // StartupPanelController.SelectNextTab/SelectPreviousTab.
-    public string StartupPanelNextTabHotkey { get; set; } = "Ctrl+Right";
-    public string StartupPanelPreviousTabHotkey { get; set; } = "Ctrl+Left";
-
     // Opens the full SearchWindow from the Quick Window, carrying over the current query -- the same
     // action as the Quick Window's own expand ("Open More") button.
     public string OpenFullWindowHotkey { get; set; } = "Ctrl+F";
+
+    // Stops the Quick Window auto-hiding when it loses focus, for the current summon only -- for
+    // assembling a query out of text copied from several other windows, which otherwise means the window
+    // (and with it the half-typed query) disappearing on every switch away. See #197. Scoped to the one
+    // summon deliberately: it is a temporary escape from the window's whole reason for existing, not a
+    // mode to leave switched on.
+    public string StayOpenHotkey { get; set; } = "Ctrl+T";
+
+    // Global, not window-level like StayOpen above: the panel docks onto whatever window is in front,
+    // so it has to be reachable while that window has focus, which means the hook service detects it.
+    public string QuickPanelHotkey { get; set; } = "Ctrl+F2";
 
     /// <summary>
     /// User overrides for plugin action hotkeys, keyed by plugin ID (the DLL file name without its
@@ -88,13 +109,23 @@ public class SearchWindowSettings
 {
     public double SearchBarWidth { get; set; } = 570;
     public double SearchBarHeight { get; set; } = 60;
-    public double? Left { get; set; }
-    public double? Top { get; set; }
+    // Fraction of whichever monitor's work area the window was last dragged to (e.g. 0.5/0.22 = centered
+    // horizontally, 22% down from the top of THAT monitor) rather than absolute screen pixels -- letting
+    // QuickSearchWindowPositioner re-derive the equivalent spot on whatever monitor the mouse/foreground
+    // window is on at the next ShowWindow, instead of always reopening on the one specific monitor the
+    // window happened to be dragged on originally.
+    public double? RelativeLeft { get; set; }
+    public double? RelativeTop { get; set; }
     // Replaces the quick window's empty-state placeholder text with date/time/day-of-week (see #101).
     public bool ShowClock { get; set; } = false;
     // When the quick window is already open, pressing the global toggle hotkey again normally hides
     // it -- this opts into opening the full SearchWindow (carrying over the current query) instead.
     public bool ReopenAsFullWindowOnRepeatHotkey { get; set; } = false;
+    // Refuses to start a drag of the quick window, so a stray press on it while reaching for the search
+    // box cannot nudge it off the spot it was put on. Only the drag: right-clicking the status icon
+    // still resets the position, which is the way back if it is already somewhere unwanted. Off by
+    // default, since being able to move the window is the behavior everyone already has.
+    public bool LockPosition { get; set; } = false;
 }
 
 public class PreviewWindowSettings

@@ -1,6 +1,5 @@
 using System.Runtime.InteropServices;
 using System.Text;
-using SwiftList.PluginSdk.Abstractions.Plugins;
 using SwiftList.PluginSdk.Services;
 
 using SwiftList.PluginSdk.Abstractions.Plugins.WindowAdapters;
@@ -9,6 +8,11 @@ namespace SwiftList.Plugins.CoreExtensions.FileDialog;
 public class FolderBrowserDialogAdapter : IFileDialogAdapter
 {
     public string Name => TranslationService.Get("Plugins_FolderBrowserDialogAdapterName");
+
+    // SHBrowseForFolder only ever picks a folder -- there's no filename box for it to alternatively want a
+    // specific file for, unlike ClassicFileDialogAdapter/StandardFileDialogAdapter's Open/Save dialogs. See
+    // IFileDialogAdapter.TargetIsFolderOnly for why callers use this.
+    public bool TargetIsFolderOnly => true;
 
     public bool CanHandle(IntPtr hwnd, string className, string processName)
     {

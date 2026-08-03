@@ -6,7 +6,6 @@ using SwiftList.App.Helpers;
 using SwiftList.App.Services;
 using SwiftList.App.ViewModels.Settings;
 using SwiftList.App.ViewModels.Settings.Plugins;
-using SwiftList.App.ViewModels.Settings.StartupPanel;
 using SwiftList.Core;
 
 using SwiftList.Core.SearchIndex;
@@ -42,7 +41,7 @@ internal static class SettingsWindowSearchExtensions
     // Every currently-reachable settings entry, static + dynamic, in one fixed order: this is the single
     // source of truth for the in-app search box, JumpToEntry's index resolution, and the SDK-facing
     // SettingsSearchService feed (see App.xaml.cs), so all three agree on what "entry N" means and none
-    // of them silently omits the plugin/hotkey-action/startup-panel-tab entries the other two include.
+    // of them silently omits the plugin or hotkey-action entries the other two include.
     // vm is null for the SDK feed (no live SettingsWindow may exist yet) -- the three dynamic sections
     // then fall back to building their own data straight from PluginManager.Instance/UserSettings
     // instead of reading the live window's already-built collections, since Activate/Reveal only matter
@@ -52,7 +51,7 @@ internal static class SettingsWindowSearchExtensions
     // rows, ...), independently of vm's own null-ness: the SDK feed always builds with vm: null, which
     // unconditionally excludes these entries (no live window to evaluate their predicate against) --
     // JumpToEntry must reproduce that exact same exclusion to keep its indices aligned with the SDK's,
-    // even though it DOES have a real, live vm available (needed for the Plugins/Hotkeys/StartupPanel
+    // even though it DOES have a real, live vm available (needed for the Plugins/Hotkeys
     // dynamic sections below, whose Reveal step looks up a container by reference-equality against the
     // live window's own bound collection -- rebuilding fresh throwaway objects there, as vm: null would,
     // makes ContainerFromItem find nothing and silently skips the highlight). Defaults to true (evaluate
@@ -80,15 +79,21 @@ internal static class SettingsWindowSearchExtensions
         foreach (var plugin in plugins)
         {
             var capturedPlugin = plugin;
-            void ExpandPlugin(SettingsViewModel _) => capturedPlugin.IsExpanded = true;
+            // Selecting is what showing a plugin means now that the page is a list beside a detail pane;
+            // it used to expand that plugin's card in a column of all of them.
+            void RevealPlugin(SettingsViewModel settings) => settings.Plugins.SelectedPlugin = capturedPlugin;
 
-            results.Add(new SettingsSearchResultItem(plugin.Name, pluginsSectionLabel, "Plugins", ExpandPlugin,
+            results.Add(new SettingsSearchResultItem(plugin.Name, pluginsSectionLabel, "Plugins", RevealPlugin,
                 Reveal: new SettingsSearchDynamicReveal("PluginsList", capturedPlugin)));
 
             foreach (var component in plugin.RawComponents)
             {
-                results.Add(new SettingsSearchResultItem(component.DisplayName, $"{pluginsSectionLabel} › {plugin.Name}", "Plugins", ExpandPlugin,
-                    Reveal: new SettingsSearchDynamicReveal("PluginsList", capturedPlugin, component)));
+                // Searched for across the whole page (empty list name), not inside the plugin's own row:
+                // RevealPlugin above has already selected the plugin, so its components are rendered in
+                // the detail pane by the time this runs -- but that pane is a sibling of the list, not
+                // something reachable from the row's container.
+                results.Add(new SettingsSearchResultItem(component.DisplayName, $"{pluginsSectionLabel} › {plugin.Name}", "Plugins", RevealPlugin,
+                    Reveal: new SettingsSearchDynamicReveal(string.Empty, component)));
             }
         }
 
@@ -107,24 +112,6 @@ internal static class SettingsWindowSearchExtensions
             {
                 results.Add(new SettingsSearchResultItem(action.DisplayName, $"{hotkeysSectionLabel} › {pluginActionsTabLabel} › {group.PluginName}", "Hotkeys", SelectPluginActionsTab,
                     Reveal: new SettingsSearchDynamicReveal("PluginActionGroupsList", capturedGroup, action)));
-            }
-        }
-
-        var startupPanelSectionLabel = TranslationManager.Instance["Settings_StartupPanel"];
-        var pluginTabsTabLabel = TranslationManager.Instance["StartupPanel_TabPluginTabs"];
-        var pluginTabGroups = vm?.StartupPanel.PluginTabGroups ?? (IEnumerable<StartupPanelPluginGroupViewModel>)StartupPanelSettingsViewModel.BuildPluginTabGroups();
-        foreach (var group in pluginTabGroups)
-        {
-            var capturedGroup = group;
-            void SelectPluginTabsSubTab(SettingsViewModel v) => v.StartupPanel.SelectedSubTab = "PluginTabs";
-
-            results.Add(new SettingsSearchResultItem(group.PluginName, $"{startupPanelSectionLabel} › {pluginTabsTabLabel}", "StartupPanel", SelectPluginTabsSubTab,
-                Reveal: new SettingsSearchDynamicReveal("PluginTabGroupsList", capturedGroup)));
-
-            foreach (var tab in group.Tabs)
-            {
-                results.Add(new SettingsSearchResultItem(tab.Label, $"{startupPanelSectionLabel} › {pluginTabsTabLabel} › {group.PluginName}", "StartupPanel", SelectPluginTabsSubTab,
-                    Reveal: new SettingsSearchDynamicReveal("PluginTabGroupsList", capturedGroup, tab)));
             }
         }
 
@@ -244,7 +231,23 @@ internal static class SettingsWindowSearchExtensions
             var section = item.Section;
             window.Dispatcher.BeginInvoke(new Action(() =>
             {
-                if (window.GetSectionPage(section)?.FindName(reveal.ListElementName) is not ItemsControl list
+                var page = window.GetSectionPage(section);
+                if (page == null) return;
+
+                // An empty list name means "search the whole page for this item" rather than "find its
+                // row inside that named list". The plugins page needs it: its list on the left holds one
+                // row per plugin, but a component lives in the detail pane beside it, which is a
+                // different element entirely -- so there is no single ItemsControl containing both, and
+                // the row container would never have the component under it to find.
+                if (reveal.ListElementName.Length == 0)
+                {
+                    if (FindDescendantByDataContext(page, reveal.GroupItem) is not { } found) return;
+                    found.BringIntoView();
+                    SettingsSearchHighlight.Show(found);
+                    return;
+                }
+
+                if (page.FindName(reveal.ListElementName) is not ItemsControl list
                     || list.ItemContainerGenerator.ContainerFromItem(reveal.GroupItem) is not FrameworkElement groupContainer)
                     return;
 
@@ -290,7 +293,10 @@ internal static class SettingsWindowSearchExtensions
         return null;
     }
 
-    private static FrameworkElement? GetSectionPage(this SettingsWindow window, string section) => section switch
+    // Internal, not private: also called by SettingsWindow.ApplySelectedSection, whose lazy PageXxx
+    // properties this switch resolves through -- that's the actual point where an untouched tab's page
+    // gets constructed for the first time (see SettingsWindow.xaml.cs's PageXxx properties).
+    internal static FrameworkElement? GetSectionPage(this SettingsWindow window, string section) => section switch
     {
         "Service" => window.PageService,
         "Index" => window.PageIndex,
@@ -300,7 +306,7 @@ internal static class SettingsWindowSearchExtensions
         "Plugins" => window.PagePlugins,
         "History" => window.PageHistory,
         "Favorites" => window.PageFavorites,
-        "StartupPanel" => window.PageStartupPanel,
+        "QuickPanel" => window.PageQuickPanel,
         "About" => window.PageAbout,
         _ => null,
     };

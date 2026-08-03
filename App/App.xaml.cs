@@ -2,8 +2,6 @@ using System.Diagnostics;
 using System.Windows;
 using SwiftList.Core;
 using SwiftList.Core.Services;
-using SwiftList.App.Helpers;
-using SwiftList.App.ViewModels.Settings;
 using SwiftList.App.Services;
 using SwiftList.App.ViewModels.Search;
 using Application = System.Windows.Application;
@@ -34,6 +32,9 @@ public partial class App : Application
     private Mutex? _appMutex;
     public static HookIpcClient? HookClient { get; private set; }
 
+    // Held for the process lifetime so its hotkey registration and message window stay alive.
+    private Services.QuickPanel.QuickPanelManager? _quickPanelManager;
+
     protected override async void OnStartup(StartupEventArgs e)
     {
         // SwiftList never set an explicit AppUserModelID, so Windows infers one on its own (commonly
@@ -63,6 +64,10 @@ public partial class App : Application
         Logger.Initialize("app.log", overwrite: true);
         var settings = UserSettings.Load();
         Logger.MinimumLevel = SettingsOptionGenerator.ParseLogLevel(settings.LogLevel);
+        // Everything this process matches outside the search pipeline -- plugin catalog items,
+        // favorites, shell-menu filtering, display highlighting -- reads this rather than the
+        // per-request value, which only ever reaches the search pipeline's own async flow.
+        SearchContext.DefaultFuzzyMatchEnabled = settings.EnableFuzzyMatch;
         StartupManager.SetEnabled(settings.StartWithWindows);
         Logger.Log("=========================================");
         Logger.Log($"Application starting with arguments: {string.Join(" ", e.Args)}");
@@ -136,7 +141,14 @@ public partial class App : Application
                 quickSearchWindow?.ToggleVisibility();
             }
         }));
+        HookClient.OnQuickPanelHotkey += () => Dispatcher.BeginInvoke(
+            new Action(() => _quickPanelManager?.Toggle()));
+
         HookClient.Start();
+
+        // The quick panel. Built here rather than lazily on the first hotkey so the handler above always
+        // has something to call; it creates no window of its own until it is first opened.
+        _quickPanelManager = new Services.QuickPanel.QuickPanelManager();
 
         // Set up global exception handlers
         AppDomain.CurrentDomain.UnhandledException += (s, args) => LogException("AppDomain UnhandledException", args.ExceptionObject as Exception);
@@ -181,18 +193,43 @@ public partial class App : Application
             };
             PluginSdk.Services.IconService.GetThumbnailFunc = (path, size) => ShellImageListInterop.TryGetPreviewThumbnail(path, size);
             PluginSdk.Services.FileMetadataService.BatchLookupFunc = FileMetadataBridge.GetMetadataBatchAsync;
+            // Cached across calls: this feed's own doc comment calls it "the host's static list of
+            // searchable settings entries", but the naive version (call BuildAllEntries fresh every
+            // time) silently broke that -- CoreExtensions' SearchSettingsInstantProvider calls
+            // GetEntries() on every debounced keystroke of a "set ..." query in the main search window,
+            // which was re-running BuildAllEntries(vm: null)'s PluginLoaderHelper.BuildPluginList
+            // reflection scan (AppDomain.GetAssemblies + two GetTypes() passes per plugin DLL) per
+            // keystroke -- independent of whether Settings was even open, and worse than the
+            // once-per-window-open cost issue #186 was about. Safe to cache: with vm: null, none of the
+            // built entries' Activate/Reveal delegates (which close over live PluginInfoViewModel/etc.
+            // instances) are ever invoked -- JumpToEntry always rebuilds fresh against the real live vm
+            // before activating anything, using the index purely as a positional lookup -- so only the
+            // translated Label/Breadcrumb/Index actually returned here need to stay current. Invalidated
+            // on language change (labels/breadcrumbs are translated at build time) and on
+            // PluginManager.ComponentsRefreshed: unlike the Plugins-section entries (which include every
+            // component regardless of IsEnabled, only ever toggling a flag PluginLoaderHelper doesn't
+            // even expose here), PluginManager.QuickPanelTabProviders -- which the QuickPanel-section
+            // entries are built from -- IS enabled-filtered, so disabling a quick-panel-tab-providing
+            // component genuinely changes this feed's membership, not just some unexposed flag on it.
+            List<PluginSdk.Services.SettingsSearchEntryInfo>? cachedSettingsSearchEntries = null;
+            TranslationManager.Instance.PropertyChanged += (_, _) => cachedSettingsSearchEntries = null;
+            PluginManager.Instance.ComponentsRefreshed += () => cachedSettingsSearchEntries = null;
             PluginSdk.Services.SettingsSearchService.GetEntriesFunc = () =>
             {
+                if (cachedSettingsSearchEntries != null)
+                    return cachedSettingsSearchEntries;
+
                 // No live SettingsWindow is guaranteed to exist here (Settings may never have been
                 // opened yet), so this passes vm: null -- BuildAllEntries then builds the Plugins/
-                // Hotkeys-actions/StartupPanel-tabs sections straight from PluginManager.Instance/
+                // Hotkeys-actions sections straight from PluginManager.Instance/
                 // UserSettings instead of a live window's collections, and conservatively excludes any
                 // conditionally-visible static entry (e.g. the WSL tab) it can't evaluate without one.
                 var entries = SettingsWindowSearchExtensions.BuildAllEntries(vm: null);
                 var list = new List<PluginSdk.Services.SettingsSearchEntryInfo>(entries.Count);
                 for (var i = 0; i < entries.Count; i++)
                     list.Add(new PluginSdk.Services.SettingsSearchEntryInfo(entries[i].Label, entries[i].SectionLabel, i));
-                return list;
+                cachedSettingsSearchEntries = list;
+                return cachedSettingsSearchEntries;
             };
             PluginSdk.Logger.LogAction = (msg, lvl) => Logger.Log(msg, (LogLevel)(int)lvl);
             TranslationManager.Instance.ReloadTranslations();

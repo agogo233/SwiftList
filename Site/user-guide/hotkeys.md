@@ -9,18 +9,18 @@ here. See [Settings → Hotkeys page](./settings/hotkeys-page) for the settings 
 |---|---|---|
 | Toggle quick window | Double-tap `Ctrl` | Can also be set to a full combo (e.g. `Alt+Space`) instead of a double-tap. |
 | Quick switch | `Ctrl+G` | Switches between the inline (embedded-in-Explorer) search bar and the main window. |
-| Select next item | `Ctrl+N` | Also works as the literal Down arrow. |
-| Select previous item | `Ctrl+P` | Also works as the literal Up arrow. |
+| Select next item | `Ctrl+N` | Also works as the literal Down arrow. In the [Quick Panel](./settings/quick-panel) it walks the whole tab rather than one group, carrying on into the next group at the end of the current one. |
+| Select previous item | `Ctrl+P` | Also works as the literal Up arrow. Same whole-tab walk in the Quick Panel. |
 | Jump to result 1–9 | `Ctrl` + digit | The modifier is configurable; the digit is always 1–9. The quick window shows each visible result's shortcut as a small badge next to it, so you don't have to count rows. |
 | Open actions menu | `Ctrl+O` | Also works as the literal Right arrow on a selected result. |
 | Complete from selection | `Ctrl+Tab` | In the quick window, fills the search box with the selected result's name/path. |
-| QuickLook preview | `Alt+P` | Toggles the preview pane for the selected result. |
+| QuickLook preview | `Alt+P` | Toggles the preview pane for the selected result. The [Quick Panel](./settings/quick-panel) takes the same key, and docks the preview to whichever side of itself has room for it. |
 | Previous keyword history | `Alt+Up` | Cycles backward through your recently typed queries. |
 | Next keyword history | `Alt+Down` | Cycles forward through your recently typed queries. |
 | Delete keyword history entry | `Ctrl+Delete` | |
 | Open full window | *(none)* | Opens the full window directly, carrying over the current query — same effect as left-clicking the [Quick Window's own logo](#search-box-logo-icon) and choosing Show Main Window from the menu that opens, without that extra step. Not bound by default; set one from **Settings → Hotkeys**. |
-| Next Startup Panel tab | `Ctrl+Right` | Wraps from the last tab back to the first. Only active while the [Startup Panel](./settings/startup-panel) is showing — otherwise the key does its normal job (e.g. moving the caret while typing a query). |
-| Previous Startup Panel tab | `Ctrl+Left` | Wraps from the first tab back to the last. Same active-only-while-showing rule as above. |
+| Keep window open | `Ctrl+T` | Stops the window hiding when focus moves elsewhere, so a query can be assembled out of text copied from other windows — hiding would otherwise clear the search box each time. Lasts for the current summon and ends with the next hide. In the quick window, middle-clicking the logo does the same thing and the logo brightens while it is on; pressing the summon hotkey while it is up but unfocused brings it back rather than hiding it. The [Quick Panel](./settings/quick-panel) takes the same key, with a pin button of its own as the visible marker. |
+| Toggle quick panel | `Ctrl+F2` | Opens the [Quick Panel](./settings/quick-panel) docked into the bottom-right corner of whatever window is in front, or closes it if it is already up. Once it is open, holding the "jump to result 1–9" modifier and pressing 1–9 switches workspaces. |
 
 ## Search box logo icon
 
@@ -30,9 +30,16 @@ different in each of the [three windows](./getting-started#the-three-windows):
 - **Quick window** — left-click (no movement) opens the same menu the tray icon's right-click shows
   (Show Main Window, Toggle Hotkeys, Settings, About, Clean Exit, Exit), anchored at the cursor; that
   menu's Show Main Window item also carries over whatever query you currently have typed. Click-and-drag
-  moves the window, same as dragging any other part of the search bar. Right-click resets the window to
-  its default on-screen position (not size) — the same one it centers to on first launch. A hover
-  tooltip spells out all three behaviors.
+  moves the window, same as dragging any other part of the search bar — hold **Ctrl** while dragging
+  (either the bar or the logo, and toggling Ctrl mid-drag works too) to constrain movement to vertical
+  only, useful for nudging the window up or down without shifting it sideways. Right-click resets the
+  window to its default on-screen position (not size) — the same one it centers to on first launch. A
+  hover tooltip spells out all three behaviors.
+
+  The remembered position is relative to whichever monitor the window was last on, not an absolute
+  screen coordinate — summon it again on a different monitor (or one with a different resolution or
+  DPI scaling) and it reopens at the equivalent spot there instead of potentially landing off-screen
+  or on the wrong display.
 - **Inline window** — only clickable when the window is docked to a native Open/Save/Browse-for-folder
   dialog: left-click opens [quick navigation](#quick-navigation-mouse), same as the dedicated trigger
   below. Not clickable when docked to a plain Explorer window or the desktop, since there's nothing
@@ -56,7 +63,8 @@ Enabled by default, toggled per-trigger in settings:
 Any of these triggers pops a cascading menu of your Favorites, History, and configured quick-access
 folders (see [Settings → Favorites](./settings/favorites) and [Settings → History](./settings/history))
 — plugins can contribute their own entries too, such as Total Commander's own Directory Hotlist if
-you've set one up in `wincmd.ini`, or a [Custom Command](./instant-answers#custom-commands) flagged
+you've set one up in `wincmd.ini`, Directory Opus's own Favorites menu, or a [Custom
+Command](./instant-answers#custom-commands) flagged
 "Show in Quick Navigation" (optionally nested into a submenu by giving it a `/`-separated path). Each
 contributing plugin gets its own labeled section at the root of the menu, and the order those
 sections appear in is yours to set — see
@@ -88,7 +96,7 @@ These always behave the same way regardless of your hotkey settings:
 | `Ctrl+Shift+Enter` | Result list | Opens the result elevated (Run as administrator). |
 | `Left` / `Right` arrow | Actions menu | Go back a menu level / enter a submenu. |
 | `Backspace` | Actions menu | Exits the actions menu when the search box is already empty. |
-| `Alt+Space` / `Alt+F4` | Quick, main, and settings windows, the QuickLook preview pane, plugin configuration dialogs, and SwiftList's own message box dialogs | Both are suppressed on these windows — no Windows system menu pops up, and `Alt+F4` doesn't close them. |
+| `Alt+Space` / `Alt+F4` | All of SwiftList's own windows | `Alt+Space` is suppressed on all of them: none has a real title bar for the Windows system menu to belong to. `Alt+F4` closes the main and settings windows as usual; it stays suppressed on the quick, inline and QuickLook windows and the dialogs, which are shown and hidden rather than opened and closed. |
 
 ## Plugin action hotkeys
 

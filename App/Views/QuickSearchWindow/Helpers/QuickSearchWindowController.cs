@@ -72,10 +72,12 @@ public class QuickSearchWindowController
     {
         _window = window;
         _positioner = new QuickSearchWindowPositioner(window, () => _lastActiveHwnd);
-        _foregroundWatcher = new QuickSearchWindowForegroundWatcher(window, () => HideWindow());
+        _foregroundWatcher = new QuickSearchWindowForegroundWatcher(window, () => HideOnFocusLoss());
     }
 
     public void PositionWindow() => _positioner.PositionWindow();
+
+    public void SaveWindowPosition() => _positioner.SaveWindowPosition();
 
     // Wired to the search box's status icon right-click -- clears the saved position and immediately
     // re-centers the window using the same fallback PositionWindow already falls back to when there's
@@ -84,21 +86,31 @@ public class QuickSearchWindowController
 
     public void ToggleVisibility() => _window.Dispatcher.Invoke(() =>
     {
-        switch (DetermineToggleAction(_window.IsVisible, _window.WindowState, UserSettings.Load().SearchWindow.ReopenAsFullWindowOnRepeatHotkey))
+        switch (DetermineToggleAction(_window.IsVisible, _window.IsActive, _window.WindowState, UserSettings.Load().SearchWindow.ReopenAsFullWindowOnRepeatHotkey, _stayOpen))
         {
             case ToggleAction.Show: ShowWindow(); break;
+            case ToggleAction.Focus: FocusWindow(); break;
             case ToggleAction.ReopenAsFullWindow: ReopenAsFullWindow(); break;
             default: HideWindow(); break;
         }
     });
 
-    internal enum ToggleAction { Show, Hide, ReopenAsFullWindow }
+    internal enum ToggleAction { Show, Hide, ReopenAsFullWindow, Focus }
 
     // Pulled out of ToggleVisibility() so the decision tree (as opposed to the real Show/Hide/reopen
     // I/O each branch performs) can be unit tested without a live window.
-    internal static ToggleAction DetermineToggleAction(bool isVisible, WindowState windowState, bool reopenAsFullWindowSetting)
+    internal static ToggleAction DetermineToggleAction(bool isVisible, bool isActive, WindowState windowState, bool reopenAsFullWindowSetting, bool stayOpen)
     {
         if (!isVisible || windowState == WindowState.Minimized) return ToggleAction.Show;
+
+        // Visible but not focused, because Stay Open is what kept it up when focus left. The hotkey means
+        // "bring me back to it" here, not "put it away" -- the window is on screen and the user is looking
+        // at it, so hiding it is the opposite of what pressing the summon key asked for. Deliberately
+        // narrowed to Stay Open rather than applied to any unfocused-but-visible state: the hotkey is also
+        // how the window gets dismissed, and a state that stopped it dismissing would be worse than this
+        // gap.
+        if (stayOpen && !isActive) return ToggleAction.Focus;
+
         return reopenAsFullWindowSetting ? ToggleAction.ReopenAsFullWindow : ToggleAction.Hide;
     }
 
@@ -115,6 +127,14 @@ public class QuickSearchWindowController
     public void ShowWindow(string? initialQuery = null)
     {
         _visibilityOpToken++;
+
+        // As early as possible, before Show() -- Windows' Power Throttling operates at the process
+        // scheduling level, so lifting it only after this window has already started painting would miss
+        // the very first frame the user is waiting on. See PowerThrottlingHelper's own comment.
+        PowerThrottlingHelper.WindowShowing("quick");
+        // Cancels a trim that is armed but has not fired: emptying the working set moments before a
+        // summon is strictly worse than never emptying it.
+        IdleWorkingSetTrimmer.WindowShowing();
 
         // Must run before anything below touches this window (Show()/Activate()/ForceForeground):
         // once any of those runs, GetForegroundWindow() starts reporting THIS window as foreground
@@ -140,9 +160,8 @@ public class QuickSearchWindowController
         _window.ViewModel.SearchQuery = initialQuery ?? string.Empty;
         _window.ViewModel.RefreshEmptyState();
         _window.ViewModel.RefreshLayoutSettings();
-        // UpdateLayout() first so the startup panel tab strip (whose Visibility/content the calls above
-        // may have just changed) actually measures/arranges before ApplyResultsLayoutImmediate reads its
-        // ActualHeight -- then apply the results height synchronously too, rather than leaving it to the
+        // UpdateLayout() first so everything the calls above may have just changed actually
+        // measures/arranges before ApplyResultsLayoutImmediate reads it -- then apply the results height synchronously too, rather than leaving it to the
         // normal Send-priority-deferred QueueResultsLayoutUpdate. Both run while the window is still
         // hidden, so the window's first visible frame (at Show() below) already lands at the correct size
         // instead of showing at whatever Height this persistent window was last left at (a different tab,
@@ -167,7 +186,7 @@ public class QuickSearchWindowController
         // ceiling instead of always fading to a flat 1.0.
         var fadeContent = _window.Content as UIElement;
         fadeContent?.BeginAnimation(UIElement.OpacityProperty, null);
-        if (fadeContent != null) fadeContent.Opacity = 0;
+        fadeContent?.Opacity = 0;
 
         _window.Show();
         _window.WindowState = WindowState.Normal;
@@ -184,16 +203,7 @@ public class QuickSearchWindowController
 
         _foregroundWatcher.Start();
 
-        _window.Dispatcher.BeginInvoke(new Action(() =>
-        {
-            var hwnd = new WindowInteropHelper(_window).Handle;
-            if (hwnd != IntPtr.Zero) ForceForeground(hwnd);
-
-            _window.Activate();
-            _window.Focus();
-
-            FocusSearchBoxWhenForeground(hwnd);
-        }), DispatcherPriority.Input);
+        ActivateAndFocus();
     }
 
     // ForceForeground's SetForegroundWindow call -- whether it succeeds locally or has to round-trip
@@ -222,6 +232,85 @@ public class QuickSearchWindowController
         timer.Start();
     }
 
+    // Set by the Stay Open hotkey, cleared by the next real hide (see FinishHide), so it only ever
+    // covers the summon it was pressed in.
+    private bool _stayOpen;
+
+    /// <summary>Whether this summon has been asked not to auto-hide when it loses focus.</summary>
+    public bool IsStayOpen => _stayOpen;
+
+    /// <summary>Raised when <see cref="IsStayOpen"/> changes, so the view can show it.</summary>
+    public event Action<bool>? StayOpenChanged;
+
+    /// <summary>
+    /// Toggles "do not auto-hide on focus loss" for the current summon.
+    /// </summary>
+    /// <remarks>
+    /// For assembling a query out of text copied from several other windows: every switch away would
+    /// otherwise hide the window, and hiding clears the query (see FinishHide), so a half-built search
+    /// was lost each time. Requested as #197.
+    /// </remarks>
+    public void ToggleStayOpen()
+    {
+        _stayOpen = !_stayOpen;
+        StayOpenChanged?.Invoke(_stayOpen);
+    }
+
+    /// <summary>
+    /// Brings the window back to the foreground without touching anything it is holding.
+    /// </summary>
+    /// <remarks>
+    /// Deliberately NOT ShowWindow: that resets the summon, and its very first act is to assign
+    /// SearchQuery, which would wipe the half-assembled query this whole feature exists to protect. All
+    /// that is wanted here is the activation half.
+    /// </remarks>
+    public void FocusWindow()
+    {
+        // First, before anything here touches the window, for the reason ShowWindow gives at its own call:
+        // once Show/Activate/ForceForeground has run, GetForegroundWindow() reports THIS window and the
+        // check can no longer see the overlay. Missing it here meant pressing the summon key while the
+        // Start Menu was open refocused this window and left the Start Menu sitting there -- which the
+        // normal summon path never did, because it runs this.
+        ShellOverlayDismissHelper.DismissOverlayIfForeground();
+
+        PowerThrottlingHelper.WindowShowing("quick");
+        IdleWorkingSetTrimmer.WindowShowing();
+        _window.Topmost = false;
+        _window.Topmost = true;
+        ActivateAndFocus();
+    }
+
+    // The activation half of a summon, shared with ShowWindow so the two cannot drift apart.
+    private void ActivateAndFocus() => _window.Dispatcher.BeginInvoke(new Action(() =>
+    {
+        var hwnd = new WindowInteropHelper(_window).Handle;
+        if (hwnd != IntPtr.Zero) ForceForeground(hwnd);
+
+        _window.Activate();
+        _window.Focus();
+
+        FocusSearchBoxWhenForeground(hwnd);
+    }), DispatcherPriority.Input);
+
+    /// <summary>
+    /// The hide that happens because focus went elsewhere, as opposed to one the user asked for.
+    /// </summary>
+    /// <remarks>
+    /// Separate entry point rather than a check inside HideWindow, because HideWindow is also how every
+    /// DELIBERATE hide runs -- opening a result, running an action or a plugin action, the global hotkey
+    /// toggling the window away. Those must still hide while Stay Open is on, or pressing Enter would
+    /// leave the window sitting there over the file it just opened. Only the two focus-loss callers come
+    /// through here: Window_Deactivated's safety net and QuickSearchWindowForegroundWatcher's global
+    /// hook. They are separate paths that both had to be covered -- a flag honoured by only one of them
+    /// leaks, which is exactly how the preview window's own hide bugs went.
+    /// </remarks>
+    public void HideOnFocusLoss(bool restoreFocus = true)
+    {
+        if (_stayOpen)
+            return;
+        HideWindow(restoreFocus);
+    }
+
     public void HideWindow(bool restoreFocus = true)
     {
         var opToken = ++_visibilityOpToken;
@@ -247,7 +336,6 @@ public class QuickSearchWindowController
         // state, so it's deferred behind a fade-out of whatever is CURRENTLY on screen -- fading out
         // first, then resetting the content, means the window dismisses showing what the user was just
         // looking at instead of jump-cutting to the empty/startup-panel state a beat before it vanishes.
-        var fadeContent = _window.Content as UIElement;
         void FinishHide()
         {
             // A newer ShowWindow()/HideWindow() call already superseded this one (e.g. the user
@@ -260,10 +348,18 @@ public class QuickSearchWindowController
             // already empty (nothing "changes" so the setter is a no-op) -- meaning next time the window
             // showed, there was nothing left to display while the panel's async refetch ran, which is what
             // produced the empty/loading flash ShowWindow's RefreshEmptyState() was supposed to avoid.
+            // Dies with the summon it belonged to, so the next one starts with the normal behaviour.
+            if (_stayOpen)
+            {
+                _stayOpen = false;
+                StayOpenChanged?.Invoke(false);
+            }
+
             _window.ViewModel.SearchQuery = string.Empty;
 
             _window.UpdateLayout();
             _window.Hide();
+            PowerThrottlingHelper.WindowHidden("quick");
 
             InlineSearchManager.Instance.KeyboardHook.IsQuickSearchWindowVisible = false;
             InlineSearchManager.Instance.KeyboardHook.Start();
@@ -275,13 +371,19 @@ public class QuickSearchWindowController
             Task.Run(async () =>
             {
                 await Task.Delay(100);
+                // These two genuinely free memory, so they still run on every hide.
                 try { ShellIconHelper.ClearCache(); } catch { }
                 try { PathCacheMaintenance.ClearAllPathCaches(); } catch { }
-                try { Win32Api.TrimWorkingSet(); } catch { }
             });
+
+            // Trimming the working set frees nothing -- it only evicts pages the next summon has to
+            // fault straight back in, which measured at ~17MB and 70% of a summon's time every single
+            // time, and at 4.7 seconds once when the machine was under an index rebuild's memory and
+            // disk pressure. Deferred until the window has been left alone; see IdleWorkingSetTrimGate.
+            IdleWorkingSetTrimmer.WindowHidden();
         }
 
-        if (fadeContent != null)
+        if (_window.Content is UIElement fadeContent)
         {
             var fadeOutDuration = (Duration)System.Windows.Application.Current.FindResource("DurationFast");
             var fadeOut = new DoubleAnimation(0.0, fadeOutDuration)

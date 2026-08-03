@@ -1,5 +1,4 @@
 using SwiftList.Plugins.CoreExtensions.Actions;
-using SwiftList.Plugins.CoreExtensions.Shell;
 using SwiftList.PluginSdk.Abstractions;
 using SwiftList.PluginSdk.Abstractions.Plugins;
 using SwiftList.PluginSdk.Services;
@@ -72,6 +71,42 @@ public class CoreExtensionsPlugin : IPlugin, IActionProvider, IConfigurable
                         DescriptionKey = "CoreExtensions_Config_CustomFoldersDesc",
                         FieldType = ConfigFieldType.StringList,
                         DefaultValue = new List<string>()
+                    }
+                }
+            },
+            // The quick panel's Recent Files tab, whose settings belong to whoever provides that tab
+            // rather than to the panel: the panel knows about folders and tabs, not about what any one
+            // tab needs to be told. Defaults matter here -- they are what the tab shows before anybody
+            // has been to this page, and RecentFilesTabProvider reads them through the same schema.
+            new PluginConfigField
+            {
+                Key = "RecentFilesGroup",
+                LabelKey = "CoreExtensions_Config_RecentFilesGroupLabel",
+                FieldType = ConfigFieldType.Group,
+                SubFields = new List<PluginConfigField>
+                {
+                    new PluginConfigField
+                    {
+                        Key = Providers.QuickPanel.RecentFilesTabProvider.DirectoriesKey,
+                        LabelKey = "CoreExtensions_Config_RecentFilesDirectoriesLabel",
+                        DescriptionKey = "CoreExtensions_Config_RecentFilesDirectoriesDesc",
+                        FieldType = ConfigFieldType.StringList,
+                        DefaultValue = Providers.QuickPanel.RecentFilesTabProvider.DefaultDirectories()
+                    },
+                    new PluginConfigField
+                    {
+                        Key = Providers.QuickPanel.RecentFilesTabProvider.CountKey,
+                        LabelKey = "CoreExtensions_Config_RecentFilesCountLabel",
+                        FieldType = ConfigFieldType.Integer,
+                        DefaultValue = 10
+                    },
+                    new PluginConfigField
+                    {
+                        Key = Providers.QuickPanel.RecentFilesTabProvider.MaxAgeKey,
+                        LabelKey = "CoreExtensions_Config_RecentFilesMaxAgeLabel",
+                        DescriptionKey = "CoreExtensions_Config_RecentFilesMaxAgeDesc",
+                        FieldType = ConfigFieldType.Integer,
+                        DefaultValue = 60
                     }
                 }
             },

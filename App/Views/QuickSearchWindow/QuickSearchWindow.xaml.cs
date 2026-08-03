@@ -2,10 +2,10 @@ using System.Windows;
 using System.Windows.Input;
 using System.Windows.Threading;
 using System.Windows.Controls;
-using SwiftList.Core;
 using SwiftList.App.Services;
-using SwiftList.App.Views.QuickSearchWindow;
+using SwiftList.Core;
 using KeyEventArgs = System.Windows.Input.KeyEventArgs;
+using MouseEventArgs = System.Windows.Input.MouseEventArgs;
 using TextBox = System.Windows.Controls.TextBox;
 using TextBlock = System.Windows.Controls.TextBlock;
 using Border = System.Windows.Controls.Border;
@@ -28,11 +28,11 @@ public partial class QuickSearchWindow : Window, ISearchWindow, IHasVisibleConte
     private readonly QuickSearchViewModel _viewModel;
     private TrayIconService? _trayService;
     private ShellMenuPresenter? _menuPresenter;
-    private bool _isFirstLoad = true;
     private readonly QuickSearchWindowController _controller;
     private readonly QuickSearchWindowInputHandler _inputHandler;
     private readonly QuickSearchWindowLayoutManager _layoutManager;
     private readonly QuickSearchWindowResultExecutor _resultExecutor;
+    private readonly QuickSearchWindowLifecycle _lifecycle;
     internal QuickSearchKeywordHistoryController KeywordHistoryController { get; private set; } = null!;
 
     // Must match QuickSearchWindow.xaml's root Border Margin ("24,40,24,24").
@@ -46,9 +46,14 @@ public partial class QuickSearchWindow : Window, ISearchWindow, IHasVisibleConte
         _viewModel = new QuickSearchViewModel();
         this.DataContext = _viewModel;
         _controller = new QuickSearchWindowController(this);
+        // Mirrors the flag onto the logo. Subscribed rather than set from ToggleStayOpen alone, because
+        // the flag also clears itself on the next real hide (see the controller's FinishHide).
+        _controller.StayOpenChanged += stayOpen => SearchBox?.IsStayOpen = stayOpen;
         _inputHandler = new QuickSearchWindowInputHandler(this);
         _layoutManager = new QuickSearchWindowLayoutManager(this);
         _resultExecutor = new QuickSearchWindowResultExecutor(this);
+        _lifecycle = new QuickSearchWindowLifecycle(this, () => _trayService?.HandleTaskbarCreated());
+        _borderDragTracker = new WindowDragTracker(this);
         InitializeChildControls();
     }
 
@@ -116,6 +121,7 @@ public partial class QuickSearchWindow : Window, ISearchWindow, IHasVisibleConte
         // Wire up event handlers to subcontrols
 
         SearchBox.IconRightClicked += _controller.ResetPosition;
+        SearchBox.IconMiddleClicked += _controller.ToggleStayOpen;
         // IsIconDraggable keeps the logo's existing "drag moves the window" behavior working alongside
         // IconLeftClicked: SearchBoxControl tells a real drag apart from a plain click by movement
         // distance (see its own Icon_MouseMove), so this needs BOTH flags rather than picking one.
@@ -123,6 +129,16 @@ public partial class QuickSearchWindow : Window, ISearchWindow, IHasVisibleConte
         SearchBox.IconDragCompleted += SaveWindowPosition;
         SearchBox.IsIconClickable = true;
         SearchBox.IsIconDraggable = true;
+        // The logo is a SECOND way to drag this window, and it lives in SearchBoxControl rather than
+        // here, so gating Border_MouseLeftButtonDown alone left it moving while "Lock position" was on.
+        //
+        // Refreshed from a tunnelling handler on the window rather than set once above: PreviewMouse...
+        // reaches the window before SearchBoxControl's own bubbling icon handler reads the flag, so the
+        // logo obeys a toggle the moment it is applied -- the same per-press freshness the border drag
+        // gets from reading the setting inline. Anchoring it to a per-show refresh instead would have
+        // left the two paths disagreeing for as long as the window stayed open.
+        PreviewMouseLeftButtonDown += (_, _) =>
+            SearchBox.IsIconDraggable = ShouldAllowIconDrag(UserSettings.Load().SearchWindow.LockPosition);
         SearchBox.IconClickHint = TranslationManager.Instance["QuickSearch_LogoDragResetHint"];
         LstResults.PreviewMouseLeftButtonUp += (s, e) => _resultExecutor.HandlePreviewMouseLeftButtonUp(e);
         LstResults.PreviewMouseRightButtonUp += (s, e) => _resultExecutor.HandlePreviewMouseRightButtonUp(e);
@@ -147,7 +163,7 @@ public partial class QuickSearchWindow : Window, ISearchWindow, IHasVisibleConte
         // QuickSearchViewModel's own UiMetrics.ScaleChanged subscription, which re-notifies each
         // existing row/tab's Scaled* bindings) -- that's a per-item PropertyChanged, not a
         // CollectionChanged, so the subscription above alone wouldn't resize the window to match.
-        Services.UiMetrics.ScaleChanged += () => _layoutManager.QueueResultsLayoutUpdate();
+        UiMetrics.ScaleChanged += () => _layoutManager.QueueResultsLayoutUpdate();
 
         KeywordHistoryController = new QuickSearchKeywordHistoryController(this);
 
@@ -159,7 +175,7 @@ public partial class QuickSearchWindow : Window, ISearchWindow, IHasVisibleConte
             }
             else
             {
-                QuickLookManager.Instance.Hide();
+                QuickLookManager.Instance.HideFrom(this);
             }
         };
     }
@@ -170,77 +186,12 @@ public partial class QuickSearchWindow : Window, ISearchWindow, IHasVisibleConte
 
     public void UpdateShortcutHints() => _layoutManager.UpdateShortcutHints();
 
-    private static readonly int WM_TASKBARCREATED = Views.InlineSearchWindow.Helpers.InlineSearchWindowNativeMethods.RegisterWindowMessage("TaskbarCreated");
+    // Fires as soon as the Win32 HWND exists, and again once the window has fully loaded -- see
+    // QuickSearchWindowLifecycle for why each step runs when it does (hardware-acceleration opt-out,
+    // Alt+Tab hiding, tray-icon re-add, theme effects, first-launch focus/hide).
+    private void Window_SourceInitialized(object? sender, EventArgs e) => _lifecycle.HandleSourceInitialized();
 
-    // Fires as soon as the Win32 HWND exists, before WPF's first layout/render pass -- the earliest
-    // point CompositionTarget.RenderMode can be set. This window is created once at startup and only
-    // ever Hidden, never Closed -- its DirectX composition surface stays alive for the whole process
-    // lifetime, which NVIDIA Advanced Optimus treats as "GPU in use" and refuses to hot-switch around
-    // (GitHub #82). Forcing software rendering on just this one window's HwndTarget avoids that,
-    // without touching SettingsWindow/SearchWindow/etc. (which are properly closed and don't trigger
-    // this). Setting it here rather than in Window_Loaded (which runs after the window has already
-    // been shown once) matters: by Loaded, WPF may already have created the hardware D3D device for
-    // this HwndTarget, and RenderMode only governs FUTURE frames, not retroactively releasing one
-    // that's already backing this window. Opt-out setting since it costs this window its hardware
-    // acceleration.
-    private void Window_SourceInitialized(object? sender, EventArgs e)
-    {
-        if (!UserSettings.Load().EnableHardwareAcceleration
-            && PresentationSource.FromVisual(this) is System.Windows.Interop.HwndSource hwndSource
-            && hwndSource.CompositionTarget is System.Windows.Interop.HwndTarget hwndTarget)
-        {
-            hwndTarget.RenderMode = System.Windows.Interop.RenderMode.SoftwareOnly;
-        }
-    }
-
-    private void Window_Loaded(object sender, RoutedEventArgs e)
-    {
-        Logger.Log("[QuickSearchWindow] Window loaded. Registering hotkey and triggering index build.", LogLevel.Debug);
-
-        // Hide from Alt+Tab by setting WS_EX_TOOLWINDOW
-        var hwnd = new System.Windows.Interop.WindowInteropHelper(this).Handle;
-        if (hwnd != IntPtr.Zero)
-        {
-            var exStyle = Views.InlineSearchWindow.Helpers.InlineSearchWindowNativeMethods.GetWindowLongPtr(hwnd, Views.InlineSearchWindow.Helpers.InlineSearchWindowNativeMethods.GWL_EXSTYLE);
-            var newExStyle = new IntPtr(exStyle.ToInt64() | Views.InlineSearchWindow.Helpers.InlineSearchWindowNativeMethods.WS_EX_TOOLWINDOW);
-            Views.InlineSearchWindow.Helpers.InlineSearchWindowNativeMethods.SetWindowLongPtr(hwnd, Views.InlineSearchWindow.Helpers.InlineSearchWindowNativeMethods.GWL_EXSTYLE, newExStyle);
-        }
-
-        // Re-add the tray icon if explorer.exe restarts mid-session (crash, shell update) -- Windows
-        // silently drops every previously-registered tray icon and broadcasts this message so still-
-        // running apps know to re-add theirs.
-        if (PresentationSource.FromVisual(this) is System.Windows.Interop.HwndSource hwndSource)
-        {
-            hwndSource.AddHook((IntPtr wnd, int msg, IntPtr wParam, IntPtr lParam, ref bool handled) =>
-            {
-                if (msg == WM_TASKBARCREATED)
-                    _trayService?.HandleTaskbarCreated();
-                return IntPtr.Zero;
-            });
-        }
-
-        if (ThemeManager.Instance.ActiveTheme != null)
-        {
-            WindowEffectHelper.ApplyThemeEffects(this, ThemeManager.Instance.ActiveTheme);
-        }
-
-        // Position the window
-
-        _controller.PositionWindow();
-
-        // Focus search box or hide on first launch
-
-        if (_isFirstLoad)
-        {
-            _isFirstLoad = false;
-            this.Hide();
-        }
-
-        else
-        {
-            TxtSearch.Focus();
-        }
-    }
+    private void Window_Loaded(object sender, RoutedEventArgs e) => _lifecycle.HandleLoaded();
 
     // ==========================================
 
@@ -256,9 +207,12 @@ public partial class QuickSearchWindow : Window, ISearchWindow, IHasVisibleConte
 
     public void ShowWindow() => _controller.ShowWindow(null);
     public void ShowWindow(string? initialQuery) => _controller.ShowWindow(initialQuery);
+    public void PositionWindow() => _controller.PositionWindow();
     public void HideWindow() => _controller.HideWindow(true);
     public void HideWindowNoRestore() => _controller.HideWindow(false);
     public void SuppressNextForegroundRestore() => _controller.SuppressNextRestore();
+    public void ToggleStayOpen() => _controller.ToggleStayOpen();
+
     public void ToggleVisibility() => _controller.ToggleVisibility();
     public void OpenFileOrFolderExternal(string path) => FileExecutor.OpenFileOrFolder(path, TxtSearch.Text, HideWindow);
     public void OpenFileOrFolderAsAdminExternal(string path) => FileExecutor.OpenFileOrFolderAsAdmin(path, TxtSearch.Text, HideWindow);
@@ -276,9 +230,22 @@ public partial class QuickSearchWindow : Window, ISearchWindow, IHasVisibleConte
         {
             timer.Stop();
             if (IsActive) return;
+            // Already hidden, so there is nothing here to react to -- something else put this window away
+            // and losing activation is just a consequence of that. Without this, opening the full window
+            // ran a second, full HideWindow() over the top of the deliberate one: two hundred milliseconds
+            // after the full window had opened the preview it inherited, this tore it down again through
+            // QuickLookManager.Reset, which is global and by then belonged to the other window. Traced from
+            // the symptom -- the preview appearing for an instant and never returning.
+            if (!IsVisible) return;
             // QuickLookManager just Hide()'d this window itself, for a preview handler's own popup
             // dialog (see its own comment) -- not a real deactivation to react to.
-            if (Services.QuickLookManager.Instance.IsHiddenForDialog) return;
+            if (QuickLookManager.Instance.IsHiddenForDialog) return;
+            // An out-of-process preview (native handler, or an external app like QuickLook docked via
+            // QuickLookBridge) legitimately holds OS foreground right now -- see PreviewActivationSignal's
+            // own doc comment. QuickSearchWindowForegroundWatcher already checks this same signal for its
+            // own (WinEventHook-driven) hide path; this is the plain Window.Deactivated path, which fires
+            // independently and needs the same guard.
+            if (PluginSdk.Services.PreviewActivationSignal.IsActive) return;
             // Do not hide if there are visible owned windows (e.g. a crash MessageBox dialog).
             foreach (Window owned in OwnedWindows)
                 if (owned.IsVisible) return;
@@ -291,27 +258,59 @@ public partial class QuickSearchWindow : Window, ISearchWindow, IHasVisibleConte
             foreach (Window w in System.Windows.Application.Current.Windows)
                 if (w != this && w.IsActive) { movedToOwnWindow = true; break; }
 
-            _controller.HideWindow(restoreFocus: !movedToOwnWindow);
+            _controller.HideOnFocusLoss(restoreFocus: !movedToOwnWindow);
         };
         timer.Start();
     }
 
+    // Manual drag instead of DragMove(): DragMove()'s native move loop is a blocking modal call with no
+    // way to query or constrain it mid-drag, but pressing/releasing Ctrl during the drag needs to take
+    // effect immediately (constrain to vertical-only movement while held) -- see WindowDragTracker.
+    private readonly WindowDragTracker _borderDragTracker;
+
+    // Pulled out of the handler so the gate can be unit tested without a live window, the same reason
+    // DetermineToggleAction exists next door.
+    //
+    // Gating the press rather than the move is what makes the lock complete: without a Start there is no
+    // drag for MouseMove to continue and no position for MouseLeftButtonUp to save, so one check covers
+    // all three handlers. Nothing else moves this window, so there is no second path to close.
+    internal static bool ShouldStartDrag(MouseButton changedButton, bool lockPosition)
+        => changedButton == MouseButton.Left && !lockPosition;
+
+    /// <summary>
+    /// The same answer for the window's other drag handle, the search box logo, whose handler lives in
+    /// SearchBoxControl and is gated by its IsIconDraggable property.
+    /// </summary>
+    internal static bool ShouldAllowIconDrag(bool lockPosition) => !lockPosition;
+
     private void Border_MouseLeftButtonDown(object sender, MouseButtonEventArgs e)
     {
-        if (e.ChangedButton == MouseButton.Left)
-        {
-            this.DragMove();
-            SaveWindowPosition();
-        }
+        // Read per press rather than cached in a field: the setting can change in the Settings window
+        // while this window exists, and UserSettings.Load() is served from memory after the first call.
+        if (!ShouldStartDrag(e.ChangedButton, UserSettings.Load().SearchWindow.LockPosition)) return;
+
+        if (sender is IInputElement el) el.CaptureMouse();
+        _borderDragTracker.Start(PointToScreen(e.GetPosition(this)));
     }
 
-    private void SaveWindowPosition()
+    private void Border_MouseMove(object sender, MouseEventArgs e)
     {
-        var settings = UserSettings.Load();
-        settings.SearchWindow.Left = this.Left;
-        settings.SearchWindow.Top = this.Top;
-        settings.Save();
+        if (!_borderDragTracker.IsDragging || e.LeftButton != MouseButtonState.Pressed)
+            return;
+
+        _borderDragTracker.Update(PointToScreen(e.GetPosition(this)));
     }
+
+    private void Border_MouseLeftButtonUp(object sender, MouseButtonEventArgs e)
+    {
+        if (!_borderDragTracker.IsDragging) return;
+
+        _borderDragTracker.End();
+        if (sender is IInputElement el) el.ReleaseMouseCapture();
+        SaveWindowPosition();
+    }
+
+    private void SaveWindowPosition() => _controller.SaveWindowPosition();
 
     private void Window_PreviewKeyDown(object sender, KeyEventArgs e) => _inputHandler.HandleWindowPreviewKeyDown(e);
 

@@ -2,11 +2,21 @@ using System.Runtime.InteropServices;
 using SwiftList.Core.Indexer.Mft;
 
 using SwiftList.Core.DriveMonitoring;
+using SwiftList.Core.Indexer.NetworkDrive.Walk;
 namespace SwiftList.Core.Indexer.Usn.Journal;
 
 public class JournalReader
 {
-    internal UsnDriveIndexResult? IndexDrive(string drive, Action<int, int>? onProgress = null)
+    // token, previousStore, and onCheckpoint only apply to the ReFS branch below -- MftIndexScanner (raw
+    // $MFT parse, not a walk) has no natural interruption point and no diff-reuse/checkpoint capability,
+    // all out of scope for the same reason: it's not a walk. A Stop request, a previous store's baseline,
+    // or mid-walk checkpoint publishing are all no-ops for NTFS.
+    internal UsnDriveIndexResult? IndexDrive(
+        string drive,
+        FileRecordStore? previousStore = null,
+        Action<int, int>? onProgress = null,
+        Action<FileRecordStore, NetworkDriveWalkStats>? onCheckpoint = null,
+        CancellationToken token = default)
     {
         Logger.Log($"[JournalReader] Indexing drive {drive}...");
         var volumePath = $"\\\\.\\{drive}:";
@@ -44,7 +54,7 @@ public class JournalReader
             fsType = VolumeHelper.GetFileSystemType(drive);
             Logger.Log($"[JournalReader] Failed to query USN journal on {drive}. Error: {err}, FileSystem: {fsType}", LogLevel.Warn);
 
-            if (fsType.Equals("NTFS", StringComparison.OrdinalIgnoreCase) || fsType.Equals("ReFS", StringComparison.OrdinalIgnoreCase))
+            if (VolumeHelper.IsJournalCapableFileSystem(fsType))
             {
                 Logger.Log($"[JournalReader] Attempting to create/activate USN journal on {fsType} drive {drive}...");
                 var createData = new Win32Api.CREATE_USN_JOURNAL_DATA
@@ -89,7 +99,7 @@ public class JournalReader
 
         if (fsType.Equals("ReFS", StringComparison.OrdinalIgnoreCase))
         {
-            return ReFsScanner.ScanDrive(drive, handle, rootFrn.Value, journalId, nextUsn, onProgress);
+            return ReFsScanner.ScanDrive(drive, handle, rootFrn.Value, journalId, nextUsn, previousStore, onProgress, onCheckpoint, token);
         }
 
         // NTFS: parse the raw $MFT so hard links are fully indexed (one row per link).

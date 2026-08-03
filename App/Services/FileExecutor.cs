@@ -18,34 +18,46 @@ public static class FileExecutor
             return;
         if (path == "__SHOW_MORE__")
         {
-            var searchWin = new SearchWindow(currentSearchText);
+            // The full window takes over from whatever asked for it, so a preview the user had open
+            // carries across instead of closing with the window it was opened from. Read before
+            // constructing anything: the new window's own startup resets this, as does the quick window
+            // hiding below. Every route from the quick window to the full one comes through here.
+            var restorePreview = QuickLookManager.Instance.IsPreviewWanted;
+            var searchWin = new SearchWindow(currentSearchText, restorePreview);
             searchWin.Show();
             onHideWindow?.Invoke();
             return;
         }
 
-        // Web-address (http/https) favorites: hand straight to the default browser, no filesystem I/O
-        // needed, so no reason to leave the UI thread for these.
+        // Web-address (http/https) favorites: hand straight to the default browser. No filesystem I/O
+        // here, but UseShellExecute still means ShellExecuteEx, which resolves the protocol handler and
+        // may be starting a cold browser -- no reason for the UI thread to wait on any of that.
         if (Helpers.FavoriteUrlHelper.IsWebUrl(path))
         {
-            try
+            ShellThread.Run("UrlLaunch", () =>
             {
-                Process.Start(new ProcessStartInfo { FileName = path, UseShellExecute = true });
-            }
-            catch (Exception ex)
-            {
-                Logger.Log($"[FileExecutor] OpenFileOrFolder failed for '{path}': {ex}", LogLevel.Error);
-                MessageBox.Show(string.Format(TranslationManager.Instance["Executor_OpenFailed"], ex.Message), TranslationManager.Instance["Service_Error"], MessageBoxButton.OK, MessageBoxImage.Error);
-            }
+                try
+                {
+                    Process.Start(new ProcessStartInfo { FileName = path, UseShellExecute = true });
+                }
+                catch (Exception ex)
+                {
+                    Logger.Log($"[FileExecutor] OpenFileOrFolder failed for '{path}': {ex}", LogLevel.Error);
+                    MessageBox.Show(string.Format(TranslationManager.Instance["Executor_OpenFailed"], ex.Message), TranslationManager.Instance["Service_Error"], MessageBoxButton.OK, MessageBoxImage.Error);
+                }
+            });
             return;
         }
 
         // Everything below can block for seconds on a slow or heavily-indexed network share
         // (File.Exists/Directory.Exists have no timeout) -- run it off the UI thread so launching
         // something doesn't freeze the whole app while a background scan is hammering the same share.
-        // Process.Start itself doesn't need the UI thread either (UseShellExecute hands off to the shell
-        // and returns); CustomMessageBox.Show already marshals itself back when called off-thread.
-        Task.Run(() => LaunchExistingPath(path, asAdmin));
+        // CustomMessageBox.Show already marshals itself back when called off-thread.
+        //
+        // On a ShellThread rather than the pool: Process.Start with UseShellExecute is ShellExecuteEx,
+        // which delegates to whatever shell extension handles the target, and some of those require an
+        // STA. The pool is MTA.
+        ShellThread.Run("FileLaunch", () => LaunchExistingPath(path, asAdmin));
     }
 
     private static void LaunchExistingPath(string path, bool asAdmin)
@@ -63,7 +75,7 @@ public static class FileExecutor
                 // uses the same handler as a normal open. Only resolved when that branch will actually be
                 // taken, since it's a real (if cheap) registry/shell lookup.
                 var associatedExe = (asAdmin && isFile && !IsElevatableExecutable(path)) ? TryGetAssociatedExecutable(path) : null;
-                var startInfo = BuildStartInfo(path, isFile, asAdmin, associatedExe);
+                var startInfo = BuildStartInfo(path, isFile, asAdmin, associatedExe, UserSettings.Load().DefaultFileManager);
 
                 if (isFile && !asAdmin)
                 {
@@ -120,10 +132,16 @@ public static class FileExecutor
     // admin-elevate-a-document branch). Only builds the ProcessStartInfo -- never starts it, and never
     // sets WorkingDirectory (the caller applies that separately, since it's real Directory.Exists I/O
     // that's also non-admin-only, unlike everything decided here).
-    internal static ProcessStartInfo BuildStartInfo(string path, bool isFile, bool asAdmin, string? associatedExe)
+    internal static ProcessStartInfo BuildStartInfo(string path, bool isFile, bool asAdmin, string? associatedExe, DefaultFileManagerSetting? defaultFileManager = null)
     {
         if (!asAdmin)
+        {
+            // A user-configured default file manager (see GitHub issue #180) only ever applies to
+            // opening a FOLDER -- a file still needs its own associated program, not the file manager.
+            if (!isFile && TryBuildDefaultFileManagerStartInfo(path, defaultFileManager) is { } customStartInfo)
+                return customStartInfo;
             return new ProcessStartInfo { FileName = path, UseShellExecute = true };
+        }
 
         if (!isFile)
             return new ProcessStartInfo { FileName = "cmd.exe", Arguments = $"/k cd /d \"{path}\"", UseShellExecute = true, Verb = "runas" };
@@ -141,6 +159,27 @@ public static class FileExecutor
         // path argument (so spaces just work). Elevating it means the program the user picks inherits
         // admin rights.
         return new ProcessStartInfo { FileName = "OpenWith.exe", Arguments = $"\"{path}\"", UseShellExecute = true, Verb = "runas" };
+    }
+
+    // Null when no custom manager is configured, so a disabled/empty setting never accidentally
+    // launches anything -- callers keep whatever their own default behavior already is. Used both here
+    // (plain "open a folder") and by ExplorerLocateHelper ("open containing folder"/Ctrl+Enter), per
+    // GitHub issue #180: one generic method rather than teaching each caller about the setting itself.
+    internal static ProcessStartInfo? TryBuildDefaultFileManagerStartInfo(string folderPath, DefaultFileManagerSetting? setting)
+    {
+        if (setting is not { Enabled: true } || string.IsNullOrWhiteSpace(setting.Path)) return null;
+        return new ProcessStartInfo { FileName = setting.Path, Arguments = BuildDefaultFileManagerArguments(folderPath, setting.Parameter), UseShellExecute = true };
+    }
+
+    // "%s" and "{}" both expand to the quoted folder path -- same two interchangeable placeholders (and
+    // the same ArgQuoting.Quote) as CustomActions.DynamicActionProvider.RunMulti already uses, so this
+    // setting works exactly the way that one already does. The user must NOT wrap the placeholder in
+    // their own quotes, since that would double up. An empty template just passes the quoted path as the
+    // sole argument.
+    internal static string BuildDefaultFileManagerArguments(string folderPath, string? parameterTemplate)
+    {
+        var quotedPath = ArgQuoting.Quote(folderPath);
+        return string.IsNullOrWhiteSpace(parameterTemplate) ? quotedPath : parameterTemplate.Replace("%s", quotedPath).Replace("{}", quotedPath);
     }
 
     public static void LocateInExplorer(string path) => ExplorerLocateHelper.LocateInExplorer(path);

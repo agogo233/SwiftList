@@ -1,4 +1,4 @@
-using SwiftList.PluginSdk.Abstractions.Plugins;
+using System.IO;
 using SwiftList.PluginSdk.Helpers;
 using SwiftList.Plugins.DirectoryOpus.Win32;
 

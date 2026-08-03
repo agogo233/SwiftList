@@ -13,8 +13,9 @@ public static class InlineSearchShortcutHelper
         // LstResults here is pinned to pixel-based scrolling for the window's whole lifetime (see
         // InlineSearchWindowLayoutManager's constructor), unlike the quick window's per-pass dynamic
         // toggle -- reading it through the same mode-aware helper the quick window needs is one less
-        // thing to keep in sync if that ever changes.
-        var rowHeight = Math.Round(UiMetrics.SearchResultItemHeight * 0.7);
+        // thing to keep in sync if that ever changes. InlineRowHeight is now a literal constant instead
+        // of a derived ratio, but the row height itself is unchanged (36).
+        var rowHeight = UiMetrics.InlineRowHeight;
         var firstVisible = WpfUiHelper.GetFirstVisibleIndex(scrollViewer, rowHeight);
         var shortcutIndex = 1;
 
@@ -34,7 +35,7 @@ public static class InlineSearchShortcutHelper
             else if (!string.IsNullOrEmpty(quickSwitch))
             {
                 HotkeyStringFormat.ParseCombo(quickSwitch, out var qsMod, out var qsKey);
-                if (string.Equals(qsMod, "Control", StringComparison.OrdinalIgnoreCase)) qsMod = "Ctrl";
+                qsMod = AbbreviateModifiers(qsMod);
 
                 if (string.Equals(qsKey, "Escape", StringComparison.OrdinalIgnoreCase)) qsKey = "Esc";
 
@@ -77,4 +78,11 @@ public static class InlineSearchShortcutHelper
             }
         }
     }
+
+    // ParseCombo's modifier output can be a "+"-joined multi-modifier combo (e.g. "Control+Win") since
+    // it started preserving every modifier instead of just the first one -- abbreviate each segment
+    // individually rather than only matching the whole string against "Control".
+    internal static string AbbreviateModifiers(string modifiers) =>
+        string.Join("+", modifiers.Split('+', StringSplitOptions.RemoveEmptyEntries)
+            .Select(part => string.Equals(part, "Control", StringComparison.OrdinalIgnoreCase) ? "Ctrl" : part));
 }

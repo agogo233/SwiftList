@@ -1,6 +1,4 @@
 using SwiftList.Core;
-
-using SwiftList.Core.Services.Plugin;
 using SwiftList.Core.SearchIndex;
 using SwiftList.Core.Services.Plugin.DirectoryIndex;
 namespace SwiftList.App.Services.Plugin;
@@ -24,6 +22,12 @@ internal static class PluginSdkBridge
 
         // Wire up the history service delegate for plugins using Core SearchHistoryStore
         PluginSdk.Services.HistoryService.GetHistoryEntriesFunc = SearchHistoryStore.GetEntries;
+
+        // Where the user was last browsing, from the same tracker the search context reads. Reached
+        // through InlineSearchManager because that is what owns the tracker; it mirrors the Hook
+        // process's live state, so this is a field read rather than a round trip.
+        PluginSdk.Services.ExplorerPathService.GetLastActivePathFunc =
+            () => InlineSearchManager.Instance.ExplorerTracker.LastActiveExplorerPath;
 
         // Wire up the favorites service delegate for plugins using Core UserSettings
         PluginSdk.Services.FavoritesService.GetFavoritesFunc = () =>
@@ -50,7 +54,51 @@ internal static class PluginSdkBridge
             }).ToList();
         };
 
+        // Wire up index-backed directory enumeration, so a plugin listing a folder it cares about reads
+        // the index the host already maintains instead of hitting the disk itself
+        PluginSdk.Services.DirectoryIndexerService.EnumerateDirectoryFunc = EnumerateDirectoryAsync;
+
+        // The same index's recency query. Distinct from enumerating a directory and sorting it, which is
+        // what a plugin would otherwise have to do to the whole of Documents to find its newest file.
+        PluginSdk.Services.RecentFilesService.GetRecentFilesFunc = GetRecentFilesAsync;
+
         // Trigger CoreDirectoryIndexManager singleton instantiation to bind SDK DirectoryIndexerService delegates
         _ = CoreDirectoryIndexManager.Instance;
+    }
+
+    private static async Task<IReadOnlyList<PluginSdk.Abstractions.ISearchResult>> GetRecentFilesAsync(
+        IReadOnlyList<string> directories, int limit, int maxAgeMinutes, CancellationToken token)
+    {
+        var recent = await new Core.Services.Search.SearchService()
+            .GetRecentFilesAsync(directories, limit, maxAgeMinutes, token).ConfigureAwait(false);
+
+        return recent.Select(result => (PluginSdk.Abstractions.ISearchResult)new SimpleSearchResult
+        {
+            Name = result.Name,
+            FullPath = result.Path,
+            IsDir = result.IsDir,
+            // The recency query carries Modified and nothing else, which is what the caller sorted by
+            // and what a row shows as its "3 minutes ago".
+            Metadata = result.Metadata,
+        }).ToList();
+    }
+
+    private static async IAsyncEnumerable<PluginSdk.Abstractions.ISearchResult> EnumerateDirectoryAsync(
+        string directoryPath, bool recursive, string filterPattern, int limit,
+        [System.Runtime.CompilerServices.EnumeratorCancellation] CancellationToken token)
+    {
+        await foreach (var result in CoreDirectoryIndexManager.Instance
+            .EnumerateDirectoryAsync(directoryPath, recursive, filterPattern, limit, token).ConfigureAwait(false))
+        {
+            yield return new SimpleSearchResult
+            {
+                Name = result.Name,
+                FullPath = result.Path,
+                IsDir = result.IsDir,
+                // Kept from the index rather than dropped: size/date are exactly what a plugin
+                // enumerating a folder would otherwise re-stat every entry from disk to learn.
+                Metadata = result.Metadata
+            };
+        }
     }
 }

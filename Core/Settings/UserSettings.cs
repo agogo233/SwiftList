@@ -7,6 +7,7 @@ public class UserSettings
     public List<NetworkDriveSetting> NetworkDrives { get; set; } = new();
     public List<WslSetting> WslSettings { get; set; } = new();
     public List<FolderIndexSetting> FolderIndexes { get; set; } = new();
+    public DefaultFileManagerSetting DefaultFileManager { get; set; } = new();
     public List<FavoriteItemSetting> Favorites { get; set; } = new();
     public List<string> ExcludedPaths { get; set; } = new()
     {
@@ -36,6 +37,10 @@ public class UserSettings
     // surface, since it's created once at startup and only ever hidden, never closed). Requires a
     // restart to take effect, since the window's HwndTarget.RenderMode is only set once at load.
     public bool EnableHardwareAcceleration { get; set; } = true;
+
+    // Off makes every bare query term a contiguous-substring match instead of a subsequence one
+    // (fzf's own --exact mode). Default on, so an upgrade never changes what a query matches.
+    public bool EnableFuzzyMatch { get; set; } = true;
     // The Quick window's tray-menu capsule button (only shown while this is true) is the replacement
     // entry point for Settings/Exit/etc., so hiding the tray icon never strands the user -- see
     // QuickSearchWindow's BtnTrayMenu and TrayIconService.ShowMenuAt.
@@ -52,7 +57,7 @@ public class UserSettings
     public SearchWindowSettings SearchWindow { get; set; } = new();
     public PreviewWindowSettings PreviewWindow { get; set; } = new();
     public MainWindowSettings MainWindow { get; set; } = new();
-    public StartupPanelSettings StartupPanel { get; set; } = new();
+    public QuickPanelSettings QuickPanel { get; set; } = new();
 
     private static string GetDefaultSystemLanguage()
     {
@@ -121,6 +126,23 @@ public class UserSettings
     /// providers by ascending Priority -- see ActionMenuBuilder's own ordering.
     /// </summary>
     public List<string> ActionMenuGroupOrder { get; set; } = new();
+
+    /// <summary>
+    /// User-chosen priority order for IFilePreviewProvider (built-in image/text/media/PE previewers plus
+    /// any third-party plugin's own), most-preferred first. Same id format as DisabledPluginComponents.
+    /// A provider whose id isn't present here yet falls back to its own Priority (higher first), same
+    /// convention QuickNavigationProviderOrder above uses for discovery order -- see
+    /// PluginManager.FilePreviewProviders.
+    /// </summary>
+    public List<string> FilePreviewProviderOrder { get; set; } = new();
+
+    /// <summary>
+    /// User-chosen priority order for IThumbnailProvider (the built-in shell thumbnail provider plus
+    /// any third-party plugin's own), most-preferred first. Same id format as DisabledPluginComponents.
+    /// A provider whose id isn't present here yet falls back to its own Priority (higher first), same
+    /// convention FilePreviewProviderOrder above uses -- see PluginManager.ThumbnailProviders.
+    /// </summary>
+    public List<string> ThumbnailProviderOrder { get; set; } = new();
 
     /// <summary>
     /// Per-type trigger character for the quick window's exclusive result-type filter -- key is the

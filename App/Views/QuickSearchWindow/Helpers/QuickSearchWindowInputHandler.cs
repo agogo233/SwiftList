@@ -33,8 +33,8 @@ public class QuickSearchWindowInputHandler
             return;
         }
         // Modifiers == None guards this against Ctrl+Right (and any other Right combo), which should
-        // fall through to its own handling below (e.g. StartupPanelNextTabHotkey) instead of always
-        // opening the actions menu just because the underlying key happens to be the same.
+        // fall through to whatever owns that combo instead of always opening the actions menu just
+        // because the underlying key happens to be the same.
         if (e.Key == Key.Right && Keyboard.Modifiers == ModifierKeys.None && SearchInputHelper.IsSearchCaretAtEnd(_window))
         {
             if (_window.LstResults.SelectedItem is AppSearchResult result)
@@ -65,6 +65,14 @@ public class QuickSearchWindowInputHandler
         if (WpfUiHelper.MatchesHotkey(settings.KeywordHistoryDeleteHotkey, Keyboard.Modifiers, actualKey))
         {
             _window.KeywordHistoryController.DeleteCurrent();
+            e.Handled = true;
+            return;
+        }
+        if (WpfUiHelper.MatchesHotkey(settings.StayOpenHotkey, Keyboard.Modifiers, actualKey))
+        {
+            // Keeps this summon on screen when focus goes elsewhere, so a query can be assembled from
+            // text copied out of other windows. See QuickSearchWindowController.ToggleStayOpen.
+            _window.ToggleStayOpen();
             e.Handled = true;
             return;
         }
@@ -133,26 +141,6 @@ public class QuickSearchWindowInputHandler
         if (WpfUiHelper.MatchesHotkey(settings.PreviousItemHotkey, Keyboard.Modifiers, actualKey))
         {
             MoveResultSelection(-1);
-            e.Handled = true;
-            return;
-        }
-        // Only claim these while the panel is actually showing AND the plain results list is what's on
-        // screen -- the defaults are Ctrl+Left/Right, which the search TextBox would otherwise use
-        // natively to jump the caret by a word while the user is typing a real query (panel hidden),
-        // and which would otherwise silently cycle the tab strip behind an open actions menu (its own
-        // Left/Right handling in SearchInputHelper only claims the bare, unmodified arrow keys).
-        // Falling through in either case lets whichever handling actually owns the key fire instead.
-        var startupPanelVisible = _window.ViewModel.Search.StartupPanelVisibility == System.Windows.Visibility.Visible
-            && _window.MenuPresenter?.IsInActionsMode != true;
-        if (startupPanelVisible && WpfUiHelper.MatchesHotkey(settings.StartupPanelNextTabHotkey, Keyboard.Modifiers, actualKey))
-        {
-            _window.ViewModel.Search.SelectNextStartupPanelTab();
-            e.Handled = true;
-            return;
-        }
-        if (startupPanelVisible && WpfUiHelper.MatchesHotkey(settings.StartupPanelPreviousTabHotkey, Keyboard.Modifiers, actualKey))
-        {
-            _window.ViewModel.Search.SelectPreviousStartupPanelTab();
             e.Handled = true;
             return;
         }
@@ -258,20 +246,12 @@ public class QuickSearchWindowInputHandler
         // item goes back to the first, and vice versa.
         var count = _window.LstResults.Items.Count;
         if (count == 0) return;
-        var index = _window.LstResults.SelectedIndex;
-        var originalIndex = index;
+        var next = ListSelectionNavigator.NextSelectable(_window.LstResults.SelectedIndex, direction, count,
+            i => _window.LstResults.Items[i] is AppSearchResult item && !item.IsEmptyResult && !item.IsSearchSectionHeader);
+        if (next < 0) return;
 
-        do
-        {
-            index = (index + direction + count) % count;
-            if (index == originalIndex) break;
-            if (_window.LstResults.Items[index] is AppSearchResult item && !item.IsEmptyResult && !item.IsSearchSectionHeader)
-            {
-                _window.LstResults.SelectedIndex = index;
-                _window.LstResults.ScrollIntoView(_window.LstResults.SelectedItem);
-                break;
-            }
-        } while (true);
+        _window.LstResults.SelectedIndex = next;
+        _window.LstResults.ScrollIntoView(_window.LstResults.SelectedItem);
     }
     private static string GetCompletionText(AppSearchResult result)
     {

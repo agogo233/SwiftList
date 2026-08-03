@@ -24,7 +24,7 @@ public enum PluginComponentType
     QuickNavigationProvider,
     ThumbnailProvider,
     QueryTokenProvider,
-    StartupPanelTabProvider,
+    QuickPanelTabProvider,
     /// <summary>Translation providers are displayed read-only; they cannot be disabled.</summary>
     TranslationProvider,
     /// <summary>Theme providers are displayed read-only; they cannot be disabled.</summary>
@@ -78,7 +78,6 @@ public class PluginComponentGroupViewModel : ViewModelBase
 /// </summary>
 public class PluginInfoViewModel : ViewModelBase
 {
-    private bool _isExpanded = true;
 
     public PluginInfoViewModel(
         string name,
@@ -147,11 +146,41 @@ public class PluginInfoViewModel : ViewModelBase
             component.IsEnabled = setTo;
     }
 
-    public bool IsExpanded
+    private bool _isConfigTab;
+
+    /// <summary>
+    /// Which of the pane's two tabs is showing: false for the plugin's details, true for its config.
+    /// </summary>
+    /// <remarks>
+    /// Starts on details, so selecting a plugin shows what it is and what it provides rather than
+    /// dropping straight into a form.
+    ///
+    /// Leaving the config tab rolls its fields back, which is what closing the old modal window did.
+    /// Edits are only written by the tab's own OK button; anything abandoned by navigating away must not
+    /// survive in the view models, or a later OK would write values the user thought they had discarded.
+    /// </remarks>
+    public bool IsConfigTab
     {
-        get => _isExpanded;
-        set => SetProperty(ref _isExpanded, value);
+        get => _isConfigTab;
+        set
+        {
+            if (_isConfigTab == value) return;
+            if (!value) RollbackConfig();
+            SetProperty(ref _isConfigTab, value);
+        }
     }
+
+    public void RollbackConfig()
+    {
+        foreach (var field in ConfigFields)
+            field.Reload();
+    }
+
+    private ICommand? _showDetailsCommand;
+    public ICommand ShowDetailsCommand => _showDetailsCommand ??= new RelayCommand(() => IsConfigTab = false);
+
+    private ICommand? _showConfigCommand;
+    public ICommand ShowConfigCommand => _showConfigCommand ??= new RelayCommand(() => IsConfigTab = true);
 
     // A plugin schema with 2+ top-level Group fields renders them as tabs (like the Hotkeys page)
     // instead of stacking every group's contents vertically down the page. A single group, or none,

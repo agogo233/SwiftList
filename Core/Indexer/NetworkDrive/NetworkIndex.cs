@@ -105,7 +105,7 @@ internal sealed class NetworkIndex : IDisposable
         string physicalRoot,
         WalkOptions options,
         CancellationToken token,
-        Action<int> onProgress,
+        Action<int, int> onProgress,
         Action<FileRecordStore, NetworkDriveWalkStats>? onCheckpoint = null,
         FileRecordStore? previousStore = null,
         Action? beforeFinalWrite = null)
@@ -123,12 +123,7 @@ internal sealed class NetworkIndex : IDisposable
             RootId = rootId,
             ExclusionRulesFingerprint = fingerprint
         };
-        // Stat the real root mtime, the same as TryCreateRecord does for every other directory -- without
-        // it this record would default to LastWriteTimeUnixSeconds=0, which TreeDiffBaseline could never
-        // match against a live stat, permanently forcing the share's own top-level entries to be re-listed
-        // on every resume no matter how unchanged they actually are.
-        uint rootLastWriteTime = 0;
-        try { rootLastWriteTime = FileTimeHelper.ToUnixSeconds(Directory.GetLastWriteTimeUtc(physicalRoot)); } catch { }
+        var rootLastWriteTime = FileTimeHelper.TryGetLastWriteTimeUnixSeconds(physicalRoot);
 
         store.Records.Add(new FileRecord(
             rootId,
@@ -154,7 +149,9 @@ internal sealed class NetworkIndex : IDisposable
         var index = FromStore(store, stats);
         index.RootId = rootId;
         index.ExclusionRulesFingerprint = fingerprint;
-        onProgress(index.Count);
+        // NetworkIndexStatus.Items has no files/dirs split to preserve -- report the true final total under
+        // "files" so every existing status consumer sees the same number it always did.
+        onProgress(index.Count, 0);
         return index;
     }
 
@@ -195,6 +192,26 @@ internal sealed class NetworkIndex : IDisposable
         {
             // This drive's index was swapped out (checkpoint/refresh/delete) mid-search -- treat as no
             // results from the stale snapshot rather than crashing the caller.
+        }
+    }
+
+    // Directory listing rather than search: the same walk local drives get, over this drive's own
+    // LiveIndex -- network/WSL/folder indexes live in this process, not in the elevated service, so a
+    // caller enumerating a share has to come through here to reach one. False = this index doesn't
+    // hold that path (wrong drive, or the directory isn't in it), so the caller can try elsewhere.
+    public bool EnumerateDirectory(string path, bool recursive, string[]? patterns, int limit, Action<SearchResult> onResult, CancellationToken token)
+    {
+        if (_live == null)
+            return false;
+        try
+        {
+            return IndexV2Searcher.EnumerateDirectory(_live, path, recursive, patterns, limit, onResult, token);
+        }
+        catch (ObjectDisposedException)
+        {
+            // Swapped out mid-walk (checkpoint/refresh/delete), same as SearchStreaming above -- report
+            // "not held here" so the caller falls back rather than reporting an empty directory.
+            return false;
         }
     }
 
@@ -275,5 +292,19 @@ internal sealed class NetworkIndex : IDisposable
         }
     }
 
-    public void Dispose() => _live?.Dispose();
+    // Every _live-touching method above guards itself with `if (_live == null) return;` -- that guard
+    // only actually protects a disposed instance if Dispose() also clears the field, which it didn't
+    // (Dispose() used to just call _live?.Dispose(), leaving _live pointing at a torn-down LiveIndex).
+    // Live search results are only a symptom-free way to hit this on an old cached NetworkIndex a rescan
+    // just superseded; the newly widened WatcherManager publish-debounce made it a real, reachable crash:
+    // a watcher-detected change can now be scheduled up to a second before it's actually persisted, and
+    // if PublishCheckpoint's ReleaseCachedIndex disposes THIS SAME instance in that window (a rescan
+    // starting), the debounced save would call Compact() on a disposed LiveIndex's already-disposed
+    // ReaderWriterLockSlim, throwing ObjectDisposedException instead of silently no-op'ing like every
+    // other guard here assumes.
+    public void Dispose()
+    {
+        _live?.Dispose();
+        _live = null;
+    }
 }

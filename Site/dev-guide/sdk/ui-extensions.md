@@ -36,28 +36,44 @@ interface IResultColumnProvider
 `ResultColumnDefinition` carries a column id, header text, width, and optional
 `VisibilityPredicate`/`SortComparer` delegates.
 
-## Startup Panel
+## Quick Panel
 
-### `IStartupPanelTabProvider`
+### `IQuickPanelTabProvider`
 
-Contributes a tab to the quick window's Startup Panel — the tab strip shown above the result list
-when the search box is empty (see [Startup Panel](../../user-guide/settings/startup-panel)).
-CoreExtensions' History and Favorites tabs are both built on this; see
-[Example Plugins](../examples#coreextensions-actions-and-the-shell-context-menu) for a walkthrough.
+Contributes a whole tab to the [Quick Panel](../../user-guide/settings/quick-panel) — the floating
+panel docked over whatever window is in front. The tab is named after the component and holds one
+list, and the host renders the entries through its own result rows, so icons, opening, thumbnails and
+the actions menu all come for free. CoreExtensions ships five: Favorites, History, Windows Recent
+Items, Last Directory and Recent Files.
 
 ```csharp
-interface IStartupPanelTabProvider : IPluginComponent
+interface IQuickPanelTabProvider : IPluginComponent
 {
-    IEnumerable<ISearchResult> GetItems();
+    Task<IReadOnlyList<ISearchResult>> GetEntriesAsync(CancellationToken cancellationToken = default);
 }
 ```
 
-`GetItems()` runs synchronously on every panel activation and is expected to be fast with no I/O —
-it's called each time the search box is cleared, not cached. A tab that returns no items is left out
-of the strip entirely rather than shown empty. The user can hide a tab from the live panel with its
-**×** button independently of disabling the component altogether in Settings → Plugins — the two
-are deliberately separate; the host uses the component's concrete class type name (`GetType().Name`)
-as the stable key to persist the closed state.
+A tab rather than a group inside somebody else's tab: what a provider returns is a whole collection,
+orthogonal to the folders a workspace gathers, so it sits beside them rather than having to be ticked
+into each one.
+
+`GetEntriesAsync()` is called every time the panel is summoned, and returns a finished set rather
+than streaming: the panel orders and caps entries as a set (newest first, at most so many), so it
+cannot show half of one without re-sorting on every arrival. That costs nothing in latency — every
+tab loads on its own task and the panel opens on the first one to arrive, so a provider that has to
+go and look delays only its own tab. Honour the token all the same: it is cancelled when the panel
+closes.
+
+Fill in `ISearchResult.Metadata`'s `Modified` where the source knows one — the default newest-first
+order uses it, and entries without one keep the order they were returned in. A provider that returns
+nothing gets no tab, and one that throws costs its own tab and nothing else.
+
+The tab opens as thumbnail tiles unless the user ticks **Show as list** for it under Settings → Quick
+Panel → Plugin tabs; the panel's own header toggle still overrides that for as long as it is open.
+Closing a tab with its **×** is deliberately not the same as disabling the component in Settings →
+Plugins: the first only takes it out of the strip (untick it back on that same page), the second
+stops it loading at all. The host uses the component id as the stable key for both the closed state
+and the display choice, so a tab closed while its plugin was off stays closed when it comes back.
 
 ## Preview & thumbnails
 
@@ -74,18 +90,49 @@ interface IFilePreviewProvider
     int Priority { get; } // default 0; higher runs first
     bool CanPreview(string path, bool isDir);
     UIElement CreatePreview(string path, bool isDir);
+    bool RendersExternally { get; } // default false
 }
 ```
+
+`Priority` is only the *default* order — the user can freely reorder providers (including relative
+to yours) from Settings → General →
+[Preview & Thumbnails](../../user-guide/settings/general#preview-thumbnails), which wins over
+whatever `Priority` returns. Don't assume your provider's declared priority is the order it actually
+runs in.
 
 Two optional companion interfaces refine preview behavior:
 
 - **`IPreviewSessionAware`** — implement this on the preview provider itself if it holds onto
   expensive out-of-process resources (a hosted native handler, a file lock); `EndPreviewSession()`
-  is called once the whole preview session ends, not on every individual preview swap.
+  is called once the whole preview session ends, not on every individual preview swap. The one
+  exception: for a provider with `RendersExternally` true, the host calls it on every swap away
+  from that provider too, not just session end — see below.
 - **`IReusablePreview`** — implement this on the `UIElement` returned from `CreatePreview` if it
   can re-point itself at a new file instead of being rebuilt from scratch: `TrySetTarget(path,
   isDir)` returns `true` if it handled the change in place, `false` to tell the host to build a
   fresh preview instead.
+
+`RendersExternally` is for a provider whose real preview surface is a separate, externally-managed
+window rather than the `UIElement` `CreatePreview` returns — e.g. handing the file off to another
+application entirely. When the winning provider has this set, the host hides its own preview panel
+instead of displaying `CreatePreview`'s content (which is then never actually shown, so it can be
+a trivial placeholder). Pair it with **`IReceivesPreviewPanelBounds`** to get the exact screen
+rectangle (physical pixels) the host's own panel would have occupied, so the external window can be
+positioned there instead of wherever it would otherwise appear:
+
+```csharp
+interface IReceivesPreviewPanelBounds
+{
+    void OnPreviewPanelBoundsAvailable(int left, int top, int width, int height);
+}
+```
+
+See the bundled (experimental) QuickLook Bridge plugin for a real example: it detects an external
+[QuickLook](https://github.com/QL-Win/QuickLook) app over its own named pipe and, if reachable,
+docks that app's window into the host panel's spot for every file/folder — see [Actions Menu &
+Preview → External preview via QuickLook](../../user-guide/actions-and-preview#external-preview-via-quicklook-optional)
+for the user-facing behavior. Note this is a different thing from SwiftList's own built-in preview
+pane, which is also informally called "QuickLook" throughout this codebase and docs.
 
 ### `IThumbnailProvider`
 
@@ -94,10 +141,16 @@ Overrides the icon/thumbnail shown for matching results.
 ```csharp
 interface IThumbnailProvider : IPluginComponent
 {
+    int Priority { get; } // default 0; higher runs first
     bool CanProvideThumbnail(string path, bool isDir);
     ImageSource? GetThumbnail(string path, int size);
 }
 ```
+
+Same caveat as `IFilePreviewProvider.Priority` above: it's only the default order, and the user can
+override it from Settings → General →
+[Preview & Thumbnails](../../user-guide/settings/general#preview-thumbnails) (the same tab hosts both
+providers' order lists).
 
 ## Themes & localization
 
