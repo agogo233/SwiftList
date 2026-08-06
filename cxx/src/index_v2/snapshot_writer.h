@@ -14,10 +14,11 @@ public:
                       const Meta& metaTemplate,
                       const std::string& path);
 
-private:
     // Writes columnar data to an already-open binary stream (no file ops).
     // Used for tests and for the internal temp-file write.
     static void WriteToStream(const SnapshotColumns& columns, std::ostream& stream);
+
+private:
 };
 
 } // namespace swiftlist::index_v2

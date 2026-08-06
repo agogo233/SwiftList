@@ -4,6 +4,7 @@
 
 #include <chrono>
 #include <filesystem>
+#include <fstream>
 #include <thread>
 
 namespace swiftlist::indexer::tests {
@@ -12,7 +13,7 @@ namespace {
 class UsnMonitorTests : public ::testing::Test {
 protected:
     void SetUp() override {
-        tmpDir_ = std::filesystem::temp_path() / "swiftlist_test_usn";
+        tmpDir_ = std::filesystem::temp_directory_path() / "swiftlist_test_usn";
         std::filesystem::create_directories(tmpDir_);
     }
 

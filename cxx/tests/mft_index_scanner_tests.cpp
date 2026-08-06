@@ -10,7 +10,7 @@ namespace {
 class MftIndexScannerTests : public ::testing::Test {
 protected:
     void SetUp() override {
-        tmpDir_ = std::filesystem::temp_path() / "swiftlist_test_mft";
+        tmpDir_ = std::filesystem::temp_directory_path() / "swiftlist_test_mft";
         std::filesystem::create_directories(tmpDir_);
     }
 

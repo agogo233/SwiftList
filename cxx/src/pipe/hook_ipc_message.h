@@ -12,6 +12,7 @@ inline constexpr uint16_t kHookIpcMagic = 0x4B48;  // "HK"
 inline constexpr uint8_t kHookIpcVersion = 1;
 
 enum class HookEventType : uint8_t {
+    None = 0,
     DoubleCtrl = 0x01,
     MouseClick = 0x02,
     ExplorerPathChanged = 0x03,

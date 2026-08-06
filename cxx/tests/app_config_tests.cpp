@@ -11,7 +11,7 @@ namespace {
 class AppConfigTests : public ::testing::Test {
 protected:
     void SetUp() override {
-        tmpDir_ = std::filesystem::temp_path() / "swiftlist_test_config";
+        tmpDir_ = std::filesystem::temp_directory_path() / "swiftlist_test_config";
         std::filesystem::create_directories(tmpDir_);
         configPath_ = tmpDir_ / "config.ini";
     }
