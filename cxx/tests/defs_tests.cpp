@@ -106,7 +106,7 @@ TEST(DriveLetter, DosDevicePath) {
 
 // ============================================================================
 // FileAttributes Tests
- ============================================================================
+// ============================================================================
 
 TEST(FileAttributes, HasFlag) {
     auto attrs = FileAttributes::Directory | FileAttributes::Hidden;

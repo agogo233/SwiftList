@@ -1,9 +1,11 @@
 #include "index_v2/delta_overlay.h"
 #include "index_v2/snapshot.h"
+#include "libengine/common/defs.h"
 
 #include <gtest/gtest.h>
 
 using namespace swiftlist::index_v2;
+using swiftlist::UInt128;
 
 TEST(DeltaOverlayTest, RemoveBaseRowPopulatesOverridesAndDeleted) {
     DeltaOverlay overlay;
