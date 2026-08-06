@@ -46,7 +46,7 @@ FzfMatchResult FzfMatcher::MatchV2(std::span<const uint8_t> chars,
             break;
         }
     }
-    if (lastIdx < 0) return result;
+    if (lastIdx < 0 || firstIdx > lastIdx) return result;
 
     int width = lastIdx - firstIdx + 1;
     if (m * width > MaxV2Cells) {
@@ -58,6 +58,8 @@ FzfMatchResult FzfMatcher::MatchV2(std::span<const uint8_t> chars,
     std::vector<int> consecutive(static_cast<size_t>(m) * width);
 
     // Initialize first row (pattern[0]) — tracks inGap like C# FzfFuzzyMatcher.
+    int maxScore = 0;
+    int maxScorePos = firstIdx;
     {
         int s0 = static_cast<int>(pattern[0]);
         bool inGap = false;
@@ -70,6 +72,10 @@ FzfMatchResult FzfMatcher::MatchV2(std::span<const uint8_t> chars,
                 consecutive[rel] = 1;
                 previous = sc;
                 inGap = false;
+                if (sc > maxScore) {
+                    maxScore = sc;
+                    maxScorePos = col;
+                }
             } else {
                 int sc = std::max(previous + (inGap ? ScoreGapExtension : ScoreGapStart), 0);
                 scores[rel] = sc;
@@ -80,9 +86,17 @@ FzfMatchResult FzfMatcher::MatchV2(std::span<const uint8_t> chars,
         }
     }
 
+    if (m == 1) {
+        if (maxScore > 0) {
+            result.Start = maxScorePos;
+            result.End = maxScorePos + 1;
+            result.Score = maxScore;
+            result.Matched = true;
+        }
+        return result;
+    }
+
     // Iterate pattern[1..m-1].
-    int maxScore = 0;
-    int maxScorePos = -1;
     for (int pidx = 1; pidx < m; ++pidx) {
         int row = pidx * width;
         int prevRow = row - width;

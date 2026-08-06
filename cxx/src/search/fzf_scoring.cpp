@@ -28,7 +28,7 @@ BonusTable BuildBonusTable() {
                 int8_t bonus = 0;
                 auto cur = static_cast<CharClass>(curr);
 
-                if (cur >= CharClass::NonWord) {
+                if (cur <= CharClass::Delimiter) {
                     // White, NonWord, Delimiter
                     if (prev == static_cast<int>(CharClass::White))
                         bonus = BonusBoundaryWhite;

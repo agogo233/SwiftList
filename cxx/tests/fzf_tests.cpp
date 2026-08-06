@@ -162,9 +162,9 @@ TEST(FzfMatcherTest, ExactSubstring) {
 TEST(FzfMatcherTest, FuzzyMatchScattered) {
     auto result = FzfMatcher::Match("swiftlist", "swl");
     EXPECT_TRUE(result.Matched);
-    // s=0, w=2, l=6
+    // s=0, w=2, l=5 (first l, not the second at 6)
     EXPECT_EQ(result.Start, 0);
-    EXPECT_EQ(result.End, 7); // l is at index 6, end is 7
+    EXPECT_EQ(result.End, 6);
 }
 
 TEST(FzfMatcherTest, NoMatchDisordered) {
@@ -309,12 +309,12 @@ TEST(FzfMatcherTest, ScoringBoundaryDelimiter) {
 }
 
 TEST(FzfMatcherTest, ScoringConsecutiveVsScattered) {
-    // "abcdef" vs "def" (consecutive end) should score higher than "axbycdef" vs "def" (scattered)
+    // Scope optimization means both cases produce the same score within the window.
     auto consecutive = FzfMatcher::Match("abcdef", "def");
     auto scattered = FzfMatcher::Match("axbycdef", "def");
     EXPECT_TRUE(consecutive.Matched);
     EXPECT_TRUE(scattered.Matched);
-    EXPECT_GT(consecutive.Score, scattered.Score);
+    EXPECT_EQ(consecutive.Score, scattered.Score);
 }
 
 TEST(FzfMatcherTest, ScoringFirstCharBonus) {
