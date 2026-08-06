@@ -40,6 +40,23 @@ public sealed class LiveDirectorySearcherTests
     }
 
     [TestMethod]
+    public void ScanDirectory_HiddenFile_PopulatesAttributesWithHiddenFlag()
+    {
+        // Regression test: attrs was computed to decide IsDir but never assigned onto the SearchResult
+        // itself, so FileSystemItemFilter.IsHiddenOrSystem always saw the zero default for every
+        // live-scanned entry regardless of its real on-disk attributes.
+        using var dir = new TempDirectory();
+        var hiddenPath = Path.Combine(dir.Path, "hidden.txt");
+        File.WriteAllText(hiddenPath, "x");
+        File.SetAttributes(hiddenPath, FileAttributes.Hidden);
+
+        var results = LiveDirectorySearcher.ScanDirectory(dir.Path, 100, CancellationToken.None);
+
+        var hidden = results.Single(r => r.Name == "hidden.txt");
+        Assert.IsTrue(hidden.Attributes.HasFlag(FileAttributes.Hidden));
+    }
+
+    [TestMethod]
     public void ScanDirectory_RecursesIntoSubdirectories()
     {
         using var dir = new TempDirectory();
@@ -62,6 +79,54 @@ public sealed class LiveDirectorySearcherTests
         var results = LiveDirectorySearcher.ScanDirectory(dir.Path, 3, CancellationToken.None);
 
         Assert.IsLessThanOrEqualTo(3, results.Count);
+    }
+
+    [TestMethod]
+    public void ScanDirectory_WithLiveQuery_StreamsOnlyMatchingEntriesAsTheyAreDiscovered()
+    {
+        using var dir = new TempDirectory();
+        File.WriteAllText(Path.Combine(dir.Path, "readme.txt"), "x");
+        File.WriteAllText(Path.Combine(dir.Path, "other.log"), "x");
+        var streamed = new List<SearchResult>();
+
+        var results = LiveDirectorySearcher.ScanDirectory(dir.Path, 100, CancellationToken.None,
+            liveQuery: "read", onLiveMatch: streamed.Add);
+
+        Assert.HasCount(2, results);
+        Assert.HasCount(1, streamed);
+        Assert.AreEqual("readme.txt", streamed[0].Name);
+    }
+
+    [TestMethod]
+    public void ScanDirectory_LiveQueryEmpty_StreamsEveryEntry()
+    {
+        using var dir = new TempDirectory();
+        File.WriteAllText(Path.Combine(dir.Path, "a.txt"), "x");
+        File.WriteAllText(Path.Combine(dir.Path, "b.txt"), "x");
+        var streamed = new List<SearchResult>();
+
+        LiveDirectorySearcher.ScanDirectory(dir.Path, 100, CancellationToken.None,
+            liveQuery: "", onLiveMatch: streamed.Add);
+
+        Assert.HasCount(2, streamed);
+    }
+
+    [TestMethod]
+    public void ScanDirectory_LiveQueryWithOnlyDirectChildren_ExcludesGrandchildrenFromLiveStream()
+    {
+        using var dir = new TempDirectory();
+        File.WriteAllText(Path.Combine(dir.Path, "child.txt"), "x");
+        var sub = Path.Combine(dir.Path, "sub");
+        Directory.CreateDirectory(sub);
+        File.WriteAllText(Path.Combine(sub, "grandchild.txt"), "x");
+        var streamed = new List<SearchResult>();
+
+        LiveDirectorySearcher.ScanDirectory(dir.Path, 100, CancellationToken.None,
+            liveQuery: "", onLiveMatch: streamed.Add, onlyDirectChildren: true, parentPath: dir.Path);
+
+        // "sub" itself is a direct child (streamed), but "grandchild.txt" (one level deeper) is not.
+        Assert.HasCount(2, streamed);
+        Assert.IsFalse(streamed.Any(r => r.Name == "grandchild.txt"));
     }
 
     [TestMethod]

@@ -3,6 +3,8 @@ using System.Windows.Input;
 using UserControl = System.Windows.Controls.UserControl;
 using TextBox = System.Windows.Controls.TextBox;
 using TextBlock = System.Windows.Controls.TextBlock;
+using DataObject = System.Windows.DataObject;
+using DataFormats = System.Windows.DataFormats;
 
 namespace SwiftList.App;
 
@@ -23,19 +25,39 @@ public partial class SearchBoxControl : UserControl
     // same way it does after a drag started elsewhere on its own chrome.
     public event Action? IconDragCompleted;
 
+    // Middle-clicking the logo toggles Stay Open (#197), as a second way in alongside the hotkey -- the
+    // reporter asked for a mouse gesture as well, and the logo is already where this window's state is
+    // shown, so it is where the state is worth being able to flip.
+    public event Action? IconMiddleClicked;
+
     // Screen-space (not element-relative) so a real drag's own re-layout of this control underneath the
     // cursor can't skew the distance measurement mid-gesture.
     private System.Windows.Point? _iconPressScreenPoint;
     private bool _iconDragStarted;
 
+    // Set only once a real drag is confirmed (see Icon_MouseMove) -- WindowDragTracker (shared with
+    // QuickSearchWindow's own Border drag) instead of Window.DragMove(), since DragMove()'s native move
+    // loop can't be constrained to vertical-only movement, or even queried, once Ctrl is pressed/released
+    // mid-drag.
+    private Helpers.Visuals.WindowDragTracker? _iconDragTracker;
+
     private void Icon_MouseRightButtonUp(object sender, MouseButtonEventArgs e) => IconRightClicked?.Invoke();
 
-    // Marks the press handled so it never bubbles up to a hosting window's own MouseLeftButtonDown
-    // (e.g. the quick window's Border_MouseLeftButtonDown, which calls DragMove()): DragMove captures
-    // the mouse for the rest of the gesture, which swallows the matching MouseLeftButtonUp below before
-    // it ever reaches this control -- so without this, a plain click on a clickable icon just silently
-    // starts (and instantly ends) a drag instead of registering as a click. Left alone when the icon
-    // isn't clickable, so windows that never opted in keep whatever click-to-drag behavior they had.
+    // WPF has no middle-button event of its own, so this is the general MouseUp filtered down to it.
+    // Deliberately not gated on IsIconClickable, unlike the left-click menu: that gate exists because a
+    // plain click on a non-clickable icon should fall through to the window drag underneath, and a
+    // middle click has nothing underneath it to fall through to.
+    private void Icon_MouseUp(object sender, MouseButtonEventArgs e)
+    {
+        if (e.ChangedButton != MouseButton.Middle) return;
+        e.Handled = true;
+        IconMiddleClicked?.Invoke();
+    }
+
+    // Marks the press handled so it never bubbles up to a hosting window's own MouseLeftButtonDown (e.g.
+    // the quick window's own Border drag): without this, a plain click on a clickable icon would also be
+    // picked up as a drag-start by whatever's underneath it. Left alone when the icon isn't clickable, so
+    // windows that never opted in keep whatever click-to-drag behavior they had.
     //
     // When IsIconDraggable is ALSO set (the quick window: its logo still drags the window, same as
     // before it was clickable at all), capture the mouse and wait to see whether the gesture turns into
@@ -55,29 +77,31 @@ public partial class SearchBoxControl : UserControl
 
     private void Icon_MouseMove(object sender, System.Windows.Input.MouseEventArgs e)
     {
-        if (!IsIconDraggable || _iconDragStarted || _iconPressScreenPoint == null || e.LeftButton != MouseButtonState.Pressed)
+        if (!IsIconDraggable || _iconPressScreenPoint == null || e.LeftButton != MouseButtonState.Pressed)
             return;
         if (sender is not System.Windows.Media.Visual visual) return;
 
         var current = visual.PointToScreen(e.GetPosition((IInputElement)sender));
-        var delta = current - _iconPressScreenPoint.Value;
-        if (Math.Abs(delta.X) < SystemParameters.MinimumHorizontalDragDistance &&
-            Math.Abs(delta.Y) < SystemParameters.MinimumVerticalDragDistance)
-            return;
 
-        // Real drag: hand off to the window's own move loop. DragMove owns mouse capture itself (and
-        // blocks until the button comes up), so this control's own capture has to be released first --
-        // otherwise the two fight over who's tracking the mouse and the window either doesn't move at all
-        // or stops following partway through.
-        // Left _iconDragStarted true rather than resetting here: DragMove blocks until the button comes
-        // up but doesn't reliably deliver a MouseLeftButtonUp back to this element afterward, so
-        // Icon_MouseLeftButtonUp can't always be trusted to see this and suppress the click that would
-        // otherwise fire right after a drag. Icon_MouseLeftButtonDown already resets this at the start of
-        // the NEXT press, which is the only place a stale value could otherwise leak into.
-        _iconDragStarted = true;
-        if (sender is IInputElement el) el.ReleaseMouseCapture();
-        Window.GetWindow(this)?.DragMove();
-        IconDragCompleted?.Invoke();
+        if (!_iconDragStarted)
+        {
+            var delta = current - _iconPressScreenPoint.Value;
+            if (Math.Abs(delta.X) < SystemParameters.MinimumHorizontalDragDistance &&
+                Math.Abs(delta.Y) < SystemParameters.MinimumVerticalDragDistance)
+                return;
+
+            // Real drag confirmed: start tracking from HERE, not the original press point, so the window
+            // doesn't jump to "catch up" for however far the mouse already moved past the drag threshold
+            // before this fired.
+            var window = Window.GetWindow(this);
+            if (window == null) return;
+            _iconDragStarted = true;
+            _iconDragTracker = new Helpers.Visuals.WindowDragTracker(window);
+            _iconDragTracker.Start(current);
+            return;
+        }
+
+        _iconDragTracker?.Update(current);
     }
 
     private void Icon_MouseLeftButtonUp(object sender, MouseButtonEventArgs e)
@@ -86,7 +110,13 @@ public partial class SearchBoxControl : UserControl
         var wasDrag = _iconDragStarted;
         _iconDragStarted = false;
         _iconPressScreenPoint = null;
-        if (wasDrag) return;
+        if (wasDrag)
+        {
+            _iconDragTracker?.End();
+            _iconDragTracker = null;
+            IconDragCompleted?.Invoke();
+            return;
+        }
 
         if (!IsIconClickable || IconLeftClicked == null) return;
         var screenPoint = ((System.Windows.Media.Visual)sender).PointToScreen(e.GetPosition((IInputElement)sender));
@@ -105,6 +135,47 @@ public partial class SearchBoxControl : UserControl
     {
         InitializeComponent();
         SizeChanged += SearchBoxControl_SizeChanged;
+        DataObject.AddPastingHandler(TxtSearch, OnSearchTextPasting);
+    }
+
+    // TxtSearch is a single-line TextBox (AcceptsReturn defaults to false), whose default paste command
+    // silently truncates multi-line clipboard content down to just its first line -- pasting several
+    // filenames copied one-per-line from a spreadsheet or text file used to leave only the first one in
+    // the box. Everything has a similar convenience feature (wrapping a multi-line paste into an OR
+    // query), and SwiftList already has an equivalent OR operator of its own (see search-syntax.md's
+    // `report | summary`), so this just needs to fold the pasted lines into that syntax instead of letting
+    // the default paste drop them. Left untouched for a normal single-line paste (the common case) so
+    // existing behavior there is unaffected.
+    // Cancels the default paste and inserts the transformed text directly through the TextBox's own
+    // SelectedText API instead of trying to hand WPF's internal paste command a substitute DataObject/
+    // FormatToApply to consume -- that approach silently pasted nothing at all in real use (verified by
+    // hand) despite looking correct in isolated unit tests, and there's no reliable way to prove from here
+    // whether the internal command actually honors a replaced DataObject at all. Doing the insertion
+    // ourselves sidesteps that uncertainty entirely: there's no internal pipeline left to second-guess.
+    internal static void OnSearchTextPasting(object sender, DataObjectPastingEventArgs e)
+    {
+        if (sender is not TextBox textBox)
+            return;
+        if (!e.DataObject.GetDataPresent(DataFormats.UnicodeText) && !e.DataObject.GetDataPresent(DataFormats.Text))
+            return;
+
+        var text = e.DataObject.GetData(DataFormats.UnicodeText) as string ?? e.DataObject.GetData(DataFormats.Text) as string;
+        if (string.IsNullOrEmpty(text))
+            return;
+
+        var lines = text.Replace("\r\n", "\n").Replace('\r', '\n').Split('\n')
+            .Select(line => line.Trim())
+            .Where(line => line.Length > 0)
+            .ToArray();
+        if (lines.Length < 2)
+            return; // Not a multi-line paste -- let the default single-line paste behavior run as-is.
+
+        var joined = string.Join(" | ", lines);
+        var insertAt = textBox.SelectionStart;
+        textBox.SelectedText = joined; // Replaces the current selection, same as a real paste would.
+        textBox.SelectionStart = insertAt + joined.Length;
+        textBox.SelectionLength = 0;
+        e.CancelCommand();
     }
 
     private void SearchBoxControl_SizeChanged(object sender, SizeChangedEventArgs e)
@@ -236,6 +307,18 @@ public partial class SearchBoxControl : UserControl
     {
         get => (bool)GetValue(IsInActionsModeProperty);
         set => SetValue(IsInActionsModeProperty, value);
+    }
+
+    // Shown on the logo while the quick window has been asked not to auto-hide (see
+    // QuickSearchWindowController.ToggleStayOpen) -- an invisible mode nobody can tell they are in is
+    // the same mistake the full window's invisible drag region was.
+    public static readonly DependencyProperty IsStayOpenProperty = DependencyProperty.Register(
+        nameof(IsStayOpen), typeof(bool), typeof(SearchBoxControl), new PropertyMetadata(false));
+
+    public bool IsStayOpen
+    {
+        get => (bool)GetValue(IsStayOpenProperty);
+        set => SetValue(IsStayOpenProperty, value);
     }
 
     // IsServiceRunning DependencyProperty

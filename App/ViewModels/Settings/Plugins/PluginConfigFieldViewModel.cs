@@ -23,6 +23,18 @@ public class PluginConfigFieldViewModel : ViewModelBase
     public string GroupName => string.IsNullOrEmpty(GroupKey) ? string.Empty : TranslationService.Get(GroupKey);
     public ConfigFieldType FieldType => SchemaField.FieldType;
     public List<string>? Choices => SchemaField.Choices?.Select(c => TranslationService.Get(c)).ToList();
+    public int MaxLength => SchemaField.MaxLength > 0 ? SchemaField.MaxLength : int.MaxValue;
+    public bool IsSingleChar => SchemaField.MaxLength == 1;
+    public double EditorWidth => IsSingleChar ? 48 : 180;
+    public System.Windows.TextAlignment TextAlignment => IsSingleChar ? System.Windows.TextAlignment.Center : System.Windows.TextAlignment.Left;
+
+    public void NotifyLanguageChanged()
+    {
+        OnPropertyChanged(nameof(Label));
+        OnPropertyChanged(nameof(Description));
+        OnPropertyChanged(nameof(GroupName));
+        OnPropertyChanged(nameof(Choices));
+    }
 
     public bool IsBoolean => FieldType == ConfigFieldType.Boolean;
     public bool IsText => FieldType == ConfigFieldType.Text;
@@ -56,6 +68,9 @@ public class PluginConfigFieldViewModel : ViewModelBase
     }
 
     public ICommand AddCommand { get; }
+
+    /// <summary>Copies the selected array item, for entries that differ in one field.</summary>
+    public ICommand DuplicateCommand { get; }
 
     public object? LocalValueStore
     {
@@ -121,6 +136,7 @@ public class PluginConfigFieldViewModel : ViewModelBase
         _onValueChanged = onValueChanged;
         _arraySupport = new PluginConfigArrayFieldSupport(this);
         AddCommand = new RelayCommand(_arraySupport.AddArrayItem);
+        DuplicateCommand = new RelayCommand(_arraySupport.DuplicateArrayItem, () => SelectedArrayItem != null);
 
         if (_onValueChanged == null)
         {

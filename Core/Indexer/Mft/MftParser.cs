@@ -25,6 +25,12 @@ internal static class MftParser
     internal static List<(long lcn, long clusters)> ParseDataRuns(byte[] rec)
     {
         var extents = new List<(long, long)>();
+        ParseDataRunsInto(rec, extents);
+        return extents;
+    }
+
+    internal static void ParseDataRunsInto(byte[] rec, List<(long lcn, long clusters)> extents)
+    {
         int a = BitConverter.ToUInt16(rec, 0x14);
         while (a + 8 <= rec.Length)
         {
@@ -55,12 +61,120 @@ internal static class MftParser
                     lcn += runOff;
                     extents.Add((lcn, runLen));
                 }
-                break;
             }
             a += (int)len;
         }
-        return extents;
     }
+
+    /// <summary>Parses resident and non-resident $ATTRIBUTE_LIST (0x20) entries to find record indexes of extension records holding <paramref name="targetAttrType"/>.</summary>
+    internal static List<ulong> ParseAttributeListRecordIndexes(byte[] rec, uint targetAttrType, Func<long, byte[], int, bool>? readAt = null, uint bytesPerCluster = 0)
+    {
+        var records = new List<ulong>();
+        int a = BitConverter.ToUInt16(rec, 0x14);
+        while (a + 8 <= rec.Length)
+        {
+            var type = BitConverter.ToUInt32(rec, a);
+            if (type == 0xFFFFFFFF)
+                break;
+            var len = BitConverter.ToUInt32(rec, a + 4);
+            if (len < 16 || a + len > rec.Length)
+                break;
+            if (type == 0x20) // $ATTRIBUTE_LIST
+            {
+                var resident = rec[a + 8] == 0;
+                if (resident)
+                {
+                    var vo = BitConverter.ToUInt16(rec, a + 0x14);
+                    var vl = BitConverter.ToUInt32(rec, a + 0x10);
+                    var p = a + vo;
+                    var end = p + (int)vl;
+                    if (end <= rec.Length)
+                    {
+                        ParseAttributeListEntries(rec.AsSpan(p, (int)vl), targetAttrType, records);
+                    }
+                }
+                else if (readAt != null && bytesPerCluster > 0 && a + 0x38 <= rec.Length)
+                {
+                    var realSize = BitConverter.ToInt64(rec, a + 0x30);
+                    if (realSize > 0 && realSize <= 16 * 1024 * 1024) // sanity cap 16MB for attribute list
+                    {
+                        var attrExtents = new List<(long lcn, long clusters)>();
+                        ParseDataRunsFromAttribute(rec, a, attrExtents);
+                        var attrBuf = new byte[realSize];
+                        long readOffset = 0;
+                        var success = true;
+                        foreach (var (lcn, clusters) in attrExtents)
+                        {
+                            var bytesToRead = (int)Math.Min(clusters * bytesPerCluster, realSize - readOffset);
+                            if (bytesToRead <= 0) break;
+                            var alignedReadBytes = (int)(clusters * bytesPerCluster);
+                            var tempBuf = new byte[alignedReadBytes];
+                            if (!readAt(lcn * bytesPerCluster, tempBuf, alignedReadBytes))
+                            {
+                                success = false;
+                                break;
+                            }
+                            Buffer.BlockCopy(tempBuf, 0, attrBuf, (int)readOffset, bytesToRead);
+                            readOffset += bytesToRead;
+                        }
+                        if (success && readOffset > 0)
+                        {
+                            ParseAttributeListEntries(attrBuf.AsSpan(0, (int)readOffset), targetAttrType, records);
+                        }
+                    }
+                }
+            }
+            a += (int)len;
+        }
+        return records;
+    }
+
+    internal static void ParseDataRunsFromAttribute(byte[] rec, int attrOffset, List<(long lcn, long clusters)> extents)
+    {
+        var len = BitConverter.ToUInt32(rec, attrOffset + 4);
+        int mpOff = BitConverter.ToUInt16(rec, attrOffset + 0x20);
+        var p = attrOffset + mpOff;
+        long lcn = 0;
+        while (p < attrOffset + len && p < rec.Length && rec[p] != 0)
+        {
+            var hdr = rec[p++];
+            var lenBytes = hdr & 0x0F;
+            var offBytes = (hdr >> 4) & 0x0F;
+            if (lenBytes == 0 || p + lenBytes > rec.Length)
+                break;
+            var runLen = ReadLE(rec, p, lenBytes);
+            p += lenBytes;
+            if (offBytes == 0)
+                continue;
+            if (p + offBytes > rec.Length)
+                break;
+            var runOff = ReadSignedLE(rec, p, offBytes);
+            p += offBytes;
+            lcn += runOff;
+            extents.Add((lcn, runLen));
+        }
+    }
+
+    private static void ParseAttributeListEntries(ReadOnlySpan<byte> buffer, uint targetAttrType, List<ulong> records)
+    {
+        var p = 0;
+        while (p + 0x18 <= buffer.Length)
+        {
+            var entryType = BitConverter.ToUInt32(buffer.Slice(p, 4));
+            var entryLen = BitConverter.ToUInt16(buffer.Slice(p + 0x04, 2));
+            if (entryLen < 0x18 || p + entryLen > buffer.Length)
+                break;
+            if (entryType == targetAttrType)
+            {
+                var mftRef = BitConverter.ToUInt64(buffer.Slice(p + 0x10, 8));
+                var recIdx = mftRef & 0xFFFFFFFFFFFF;
+                if (recIdx > 0 && !records.Contains(recIdx))
+                    records.Add(recIdx);
+            }
+            p += entryLen;
+        }
+    }
+
 
     /// <summary>
     /// Walks a FILE record's attributes: collects every resident $FILE_NAME (excluding DOS-only 8.3
@@ -81,6 +195,7 @@ internal static class MftParser
         // touched again. $DATA's own real-size field (read here from the same already-loaded record,
         // no extra I/O) is the one NTFS keeps authoritative, so it wins whenever present.
         long? dataSize = null;
+        (UInt128 parent, string name, long size)? dosFallbackName = null;
         int a = BitConverter.ToUInt16(buf, recOff + 0x14);
         while (a + 8 <= recLen)
         {
@@ -108,14 +223,25 @@ internal static class MftParser
                 var vp = recOff + a + vo;
                 if (vp + 0x42 <= recOff + recLen)
                 {
+                    var fnAttrs = BitConverter.ToUInt32(buf, vp + 0x38);
+                    if ((fnAttrs & (uint)FileAttributes.Directory) != 0)
+                        stdAttrs |= (uint)FileAttributes.Directory;
+
                     var ns = buf[vp + 0x41]; // 0=POSIX 1=Win32 2=DOS 3=Win32&DOS
-                    if (ns != 2)
+                    UInt128 parent = (ulong)BitConverter.ToInt64(buf, vp);
+                    var size = BitConverter.ToInt64(buf, vp + 0x30); // real (logical) size -- may be stale, see dataSize above
+                    int nameLen = buf[vp + 0x40];
+                    if (vp + 0x42 + nameLen * 2 <= recOff + recLen)
                     {
-                        UInt128 parent = (ulong)BitConverter.ToInt64(buf, vp);
-                        var size = BitConverter.ToInt64(buf, vp + 0x30); // real (logical) size -- may be stale, see dataSize above
-                        int nameLen = buf[vp + 0x40];
-                        if (vp + 0x42 + nameLen * 2 <= recOff + recLen)
-                            names.Add((parent, Encoding.Unicode.GetString(buf, vp + 0x42, nameLen * 2), size));
+                        var parsedName = Encoding.Unicode.GetString(buf, vp + 0x42, nameLen * 2);
+                        if (ns != 2)
+                        {
+                            names.Add((parent, parsedName, size));
+                        }
+                        else
+                        {
+                            dosFallbackName ??= (parent, parsedName, size);
+                        }
                     }
                 }
             }
@@ -133,6 +259,11 @@ internal static class MftParser
                 }
             }
             a += (int)len;
+        }
+
+        if (names.Count == 0 && dosFallbackName.HasValue)
+        {
+            names.Add(dosFallbackName.Value);
         }
 
         if (dataSize.HasValue)

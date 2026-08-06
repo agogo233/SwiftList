@@ -36,7 +36,7 @@ public class PluginManager : PluginRegistry
     private readonly List<IQuickNavigationProvider> _quickNavigationProviders = new();
     private readonly List<IThumbnailProvider> _thumbnailProviders = new();
     private readonly List<PluginSdk.Abstractions.Plugins.IQueryTokenProvider> _queryTokenProviders = new();
-    private readonly List<PluginSdk.Abstractions.Plugins.IStartupPanelTabProvider> _startupPanelTabProviders = new();
+    private readonly List<PluginSdk.Abstractions.Plugins.IQuickPanelTabProvider> _quickPanelTabProviders = new();
     private uint _nextRuntimeActionId = 0x80000000;
 
     // pluginId -> (field Key -> schema DefaultValue), built once after all plugins are loaded, so
@@ -97,7 +97,7 @@ public class PluginManager : PluginRegistry
     void PluginRegistry.AddQuickNavigationProvider(IQuickNavigationProvider p) => _quickNavigationProviders.Add(p);
     void PluginRegistry.AddThumbnailProvider(IThumbnailProvider p) => _thumbnailProviders.Add(p);
     void PluginRegistry.AddQueryTokenProvider(PluginSdk.Abstractions.Plugins.IQueryTokenProvider p) => _queryTokenProviders.Add(p);
-    void PluginRegistry.AddStartupPanelTabProvider(PluginSdk.Abstractions.Plugins.IStartupPanelTabProvider p) => _startupPanelTabProviders.Add(p);
+    void PluginRegistry.AddQuickPanelTabProvider(PluginSdk.Abstractions.Plugins.IQuickPanelTabProvider p) => _quickPanelTabProviders.Add(p);
 
     // ── Public API ────────────────────────────────────────────────────────
 
@@ -138,7 +138,16 @@ public class PluginManager : PluginRegistry
         settings.Save();
     }
 
-    public void RefreshDisabledComponents() => _filter.Refresh();
+    // Raised so callers that cache anything derived from IsEnabled-filtered collections (e.g.
+    // QuickPanelTabProviders, which RefreshDisabledComponents can change the membership of) know to
+    // invalidate -- see App.xaml.cs's SettingsSearchService.GetEntriesFunc cache.
+    public event Action? ComponentsRefreshed;
+
+    public void RefreshDisabledComponents()
+    {
+        _filter.Refresh();
+        ComponentsRefreshed?.Invoke();
+    }
 
     public bool IsComponentEnabled(string dllName, PluginComponentType type, string name)
         => _filter.IsEnabled(dllName, type, name);
@@ -228,20 +237,51 @@ public class PluginManager : PluginRegistry
     public IEnumerable<PluginSdk.Abstractions.Plugins.ITranslationProvider> TranslationProviders => _translationProviders;
     public IEnumerable<PluginSdk.Abstractions.Plugins.IThemeProvider> ThemeProviders => _themeProviders;
     public IEnumerable<IActivePathCollector> ActivePathCollectors => _pathCollectors;
+    // Ordered per UserSettings.FilePreviewProviderOrder (position = priority, most-preferred first); a
+    // provider whose id isn't listed there yet falls back to its own Priority (higher first), same
+    // fallback shape SidebarFilterProviders/QuickNavigationProviders use for their own user-order lists.
     public IEnumerable<IFilePreviewProvider> FilePreviewProviders
-        => _previewProviders
-            .Where(p => _filter.IsEnabled(ComponentFilter.GetDllName(p), PluginComponentType.FilePreviewProvider, p.GetType().Name))
-            .OrderByDescending(p => p.Priority);
+    {
+        get
+        {
+            var order = UserSettings.Load().FilePreviewProviderOrder;
+            return _previewProviders
+                .Where(p => _filter.IsEnabled(ComponentFilter.GetDllName(p), PluginComponentType.FilePreviewProvider, p.GetType().Name))
+                .OrderBy(p =>
+                {
+                    var id = Helpers.PluginLoaderHelper.MakeId(ComponentFilter.GetDllName(p), PluginComponentType.FilePreviewProvider, p.GetType().Name);
+                    var rank = order.IndexOf(id);
+                    return rank >= 0 ? rank : int.MaxValue;
+                })
+                .ThenByDescending(p => p.Priority);
+        }
+    }
 
+    // Ordered per UserSettings.ThumbnailProviderOrder (position = priority, most-preferred first); a
+    // provider whose id isn't listed there yet falls back to its own Priority (higher first), same
+    // fallback shape FilePreviewProviders above uses for its own user-order list.
     public IEnumerable<IThumbnailProvider> ThumbnailProviders
-        => _thumbnailProviders
-            .Where(p => _filter.IsEnabled(ComponentFilter.GetDllName(p), PluginComponentType.ThumbnailProvider, p.GetType().Name));
+    {
+        get
+        {
+            var order = UserSettings.Load().ThumbnailProviderOrder;
+            return _thumbnailProviders
+                .Where(p => _filter.IsEnabled(ComponentFilter.GetDllName(p), PluginComponentType.ThumbnailProvider, p.GetType().Name))
+                .OrderBy(p =>
+                {
+                    var id = Helpers.PluginLoaderHelper.MakeId(ComponentFilter.GetDllName(p), PluginComponentType.ThumbnailProvider, p.GetType().Name);
+                    var rank = order.IndexOf(id);
+                    return rank >= 0 ? rank : int.MaxValue;
+                })
+                .ThenByDescending(p => p.Priority);
+        }
+    }
 
     public IEnumerable<PluginSdk.Abstractions.Plugins.IQueryTokenProvider> QueryTokenProviders
         => _queryTokenProviders.Where(p => _filter.IsEnabled(ComponentFilter.GetDllName(p), PluginComponentType.QueryTokenProvider, p.GetType().Name));
 
-    public IEnumerable<PluginSdk.Abstractions.Plugins.IStartupPanelTabProvider> StartupPanelTabProviders
-        => _startupPanelTabProviders.Where(p => _filter.IsEnabled(ComponentFilter.GetDllName(p), PluginComponentType.StartupPanelTabProvider, p.GetType().Name));
+    public IEnumerable<PluginSdk.Abstractions.Plugins.IQuickPanelTabProvider> QuickPanelTabProviders
+        => _quickPanelTabProviders.Where(p => _filter.IsEnabled(ComponentFilter.GetDllName(p), PluginComponentType.QuickPanelTabProvider, p.GetType().Name));
 
     // ── Unfiltered collections (settings UI ?show disabled as unchecked) ─
 
@@ -257,7 +297,7 @@ public class PluginManager : PluginRegistry
     public IEnumerable<PluginSdk.Abstractions.Plugins.ITranslationProvider> AllTranslationProviders => _translationProviders;
     public IEnumerable<PluginSdk.Abstractions.Plugins.IThemeProvider> AllThemeProviders => _themeProviders;
     public IEnumerable<PluginSdk.Abstractions.Plugins.IQueryTokenProvider> AllQueryTokenProviders => _queryTokenProviders;
-    public IEnumerable<PluginSdk.Abstractions.Plugins.IStartupPanelTabProvider> AllStartupPanelTabProviders => _startupPanelTabProviders;
+    public IEnumerable<PluginSdk.Abstractions.Plugins.IQuickPanelTabProvider> AllQuickPanelTabProviders => _quickPanelTabProviders;
 
     // ── Search and execution ──────────────────────────────────────────────
 
@@ -302,4 +342,7 @@ internal class SimpleSearchResult : PluginSdk.Abstractions.ISearchResult
     public string ContextDirectory { get; set; } = string.Empty;
     public bool IsDir { get; set; }
     public bool IsApplication { get; set; }
+    // Default (unknown) unless the producer had it already -- index-backed results (directory
+    // enumeration, plugin directory search) carry the real values straight from the index.
+    public PluginSdk.Abstractions.FileMetadata Metadata { get; set; }
 }

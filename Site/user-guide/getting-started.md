@@ -17,6 +17,12 @@ published for every release:
   registration and its "start with Windows" entry. Both are per-user (HKCU) only, so no
   administrator prompt is needed.
 
+Each of those is published for **x64** and for **ARM64**. The names above are the x64 builds, which
+run on any recent PC — including Windows on ARM, where they run emulated. On an ARM machine prefer
+`SwiftList-Setup_arm64.exe` or `SwiftList-Portable_arm64.zip`, which are native. Automatic updates
+stay on the architecture you installed, so moving between them means downloading the other build
+yourself.
+
 On first run, SwiftList installs and starts a Windows service (`SwiftList.Service`) that owns file
 indexing. This split exists on purpose — see [Architecture](../dev-guide/architecture) if you're
 curious why — but as a user, the only thing you need to know is: **Settings → Service Status**
@@ -38,9 +44,9 @@ where and how they appear.
 
 ## Basic search
 
-Clearing the search box (or opening the quick window fresh) shows the
-[Startup Panel](./settings/startup-panel) instead of an empty result list — a tab strip with quick
-access to recent files, favorites, and history, no query needed.
+Recent files, favorites and history are reachable without typing anything at all — they are tabs in
+the [Quick Panel](./settings/quick-panel), which opens over whatever window is in front rather than
+inside the search window.
 
 Just start typing. Results update as you type, ranked by relevance (see
 [Search Syntax](./search-syntax) for how matching and ranking work). Use the

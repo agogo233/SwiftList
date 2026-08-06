@@ -2,8 +2,6 @@ using System.Windows.Input;
 using SwiftList.App.Helpers;
 using SwiftList.App.Services;
 using SwiftList.Core;
-using SwiftList.Core.Indexer.Usn;
-using SwiftList.Core.Indexer.NetworkDrive;
 using System.ComponentModel;
 using SwiftList.App.ViewModels.Settings.Plugins;
 using SwiftList.Core.Services.Search;
@@ -12,7 +10,6 @@ using SwiftList.App.Services.Plugin;
 using SwiftList.Core.Wire;
 using SwiftList.App.ViewModels.Settings.LocalDrive;
 using SwiftList.App.ViewModels.Settings.NetworkDrive;
-using SwiftList.App.ViewModels.Settings.StartupPanel;
 using SwiftList.App.ViewModels.Settings.General;
 namespace SwiftList.App.ViewModels.Settings;
 
@@ -36,12 +33,12 @@ public class SettingsViewModel : ViewModelBase
         General = new GeneralSettingsViewModel(_userSettings);
         Appearance = new ThemeSettingsViewModel(_userSettings);
         Exclusions = new ExclusionSettingsViewModel(_userSettings);
-        Plugins = new PluginManagementViewModel(_userSettings);
         Blacklist = new BlacklistSettingsViewModel(_userSettings);
         Hotkeys = new HotkeySettingsViewModel(_userSettings, Blacklist);
         History = new HistorySettingsViewModel(_userSettings);
         Favorites = new FavoritesSettingsViewModel(_userSettings);
-        StartupPanel = new StartupPanelSettingsViewModel(_userSettings);
+        QuickPanel = new QuickPanel.QuickPanelSettingsViewModel(_userSettings);
+        LocalSend = new LocalSend.LocalSendSettingsViewModel(_userSettings);
         RefreshCommand = new RelayCommand(Refresh);
         ApplyCommand = new RelayCommand(Apply, () => CanApply);
 
@@ -50,7 +47,14 @@ public class SettingsViewModel : ViewModelBase
         RefreshLists();
     }
 
-    private void OnLanguageChanged(object? sender, PropertyChangedEventArgs e) => ApplyUiState();
+    // The Quick Panel page is nudged from here rather than subscribing itself: its labels are built in
+    // code (the kind dropdown's options, a plugin tab's name) instead of bound through the XAML
+    // translation markup that repaints itself, so nothing else would tell them the language moved.
+    private void OnLanguageChanged(object? sender, PropertyChangedEventArgs e)
+    {
+        ApplyUiState();
+        QuickPanel.NotifyLanguageChanged();
+    }
 
     public ServiceSettingsViewModel Service { get; }
     public ServiceLogViewModel Log { get; }
@@ -59,12 +63,29 @@ public class SettingsViewModel : ViewModelBase
     public GeneralSettingsViewModel General { get; }
     public ThemeSettingsViewModel Appearance { get; }
     public ExclusionSettingsViewModel Exclusions { get; }
-    public PluginManagementViewModel Plugins { get; }
+
+    // Lazy, not built alongside the other sub-VMs above -- issue #186: PluginManagementViewModel's ctor
+    // runs PluginLoaderHelper.BuildPluginList, which does genuine reflection (AppDomain.GetAssemblies,
+    // GetReferencedAssemblies, and two GetTypes() scans per plugin DLL via GetPluginDisplayName/
+    // ResolveConfigurable) across every loaded plugin -- unlike every other sub-VM here, which is cheap
+    // field/command wiring or LINQ over PluginManager's already-cached collections. Deferring it means a
+    // Settings-window open that never visits the Plugins tab (or types a plugin name into the search box,
+    // which forces it via the property access in SettingsWindowSearchExtensions.BuildAllEntries) never
+    // pays that scan at all.
+    private PluginManagementViewModel? _plugins;
+    public PluginManagementViewModel Plugins => _plugins ??= new PluginManagementViewModel(_userSettings);
+
     public HotkeySettingsViewModel Hotkeys { get; }
     public BlacklistSettingsViewModel Blacklist { get; }
     public HistorySettingsViewModel History { get; }
     public FavoritesSettingsViewModel Favorites { get; }
-    public StartupPanelSettingsViewModel StartupPanel { get; }
+    public LocalSend.LocalSendSettingsViewModel LocalSend { get; }
+
+    /// <summary>
+    /// The floating panel's own page. Its "tabs" are workspaces, which is not what a tab means in the
+    /// panel's own strip -- see QuickPanelSettingsViewModel.
+    /// </summary>
+    public QuickPanel.QuickPanelSettingsViewModel QuickPanel { get; }
     public ICommand RefreshCommand { get; }
     public ICommand ApplyCommand { get; }
 
@@ -135,16 +156,20 @@ public class SettingsViewModel : ViewModelBase
         _userSettings.FolderIndexes = newFolderIndexes;
         Exclusions.Save();
         General.Apply();
-        Plugins.Save();
+        // _plugins, not the Plugins property: an untouched Plugins tab was never constructed, so it has
+        // nothing dirty to save -- going through the property here would force that reflection scan
+        // (see the Plugins property's own comment) just to immediately no-op.
+        _plugins?.Save();
         Hotkeys.Apply();
         Blacklist.Save();
         History.Save();
         Favorites.Save();
-        StartupPanel.Save();
+        QuickPanel.Save();
+        LocalSend.Apply();
         _userSettings.Save();
+        Core.Services.LocalSend.LocalSendServiceManager.Instance.ApplySettings(_userSettings);
         App.HookClient?.SendMessage(new IpcMessage { Id = IpcMessageId.ReloadSettings });
         PluginManager.Instance.RefreshDisabledComponents();
-        StartupPanel.RefreshPluginTabs();
         NetworkDrive.ResetPendingEdits();
         var exclusionsChanged = SettingsChangeSnapshot.ExclusionsChanged(previousExclusions, SettingsChangeSnapshot.CaptureExclusions(_userSettings));
         var newDisabledAliases = _userSettings.DisabledPluginComponents

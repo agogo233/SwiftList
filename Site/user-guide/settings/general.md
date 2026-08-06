@@ -1,7 +1,7 @@
 # General
 
-Five tabs: **System**, **Quick Search Window**, **Full Search Window**, **Preview**, and **Quick
-Navigation**.
+Six tabs: **System**, **Quick Search Window**, **Full Search Window**, **Preview**, **Quick
+Navigation**, and **Preview & Thumbnails**.
 
 ## System
 
@@ -17,6 +17,12 @@ Navigation**.
   menu the tray icon's right-click shows is always available from the
   [Quick window's own logo](../hotkeys#search-box-logo-icon) regardless of this setting, so hiding
   the tray icon never strands you without a way back into Settings or Exit.
+- **Enable fuzzy matching** — checkbox, on by default. With fuzzy matching on, a bare search term
+  matches as long as its characters occur in order anywhere in the name; turning this off requires
+  a bare term to appear as a contiguous substring instead (`abc` no longer matches `a-b-c`) — see
+  [Search Syntax](../search-syntax#fuzzy-matching-default) for what does and doesn't change.
+  Applies immediately, no restart needed.
+- **Global query token prefix** — text box (1 character max, default `:`). Sets the lead prefix character used to split query token expressions at the trailing position of the search box. Dynamic path filtering and custom filter providers also configure their prefix characters under **Settings → Plugins → CoreExtensions**.
 - **Log level** — dropdown: Error / Warn / Info (default) / Debug. Controls verbosity across the
   App, Service, and Hook logs (see [Service Status](./service-status)).
 - **Interface language** — dropdown, populated from every installed translation provider (built-in
@@ -44,7 +50,10 @@ Covers both the quick search bar's appearance and how its search results are pri
   toggle hotkey again while the quick window is already open just hides it; turning this on makes
   the second press switch to the full window instead (carrying over whatever query you'd already
   typed), rather than closing anything.
-- **Reset Layout Settings** button — restores all four settings above to their defaults.
+- **Lock position** — checkbox, off by default. Stops the quick window being dragged, so a stray
+  press can't nudge it off the spot you put it on. Right-clicking the logo still resets its
+  position, and **Reset Layout Settings** below clears the lock along with everything else.
+- **Reset Layout Settings** button — restores all five settings above to their defaults.
 
 Right-clicking the [quick window's logo](../hotkeys#search-box-logo-icon) resets just its on-screen
 position (not size), re-centering it the same way it centers on first launch.
@@ -94,9 +103,11 @@ section per plugin that contributes actions there (e.g. Custom Actions, or the W
 right-click menu). A section not yet in this list falls back to its natural position (built-in
 first, then plugin sections in whatever order they were contributed).
 
-Clicking a results-grid column header to sort by it is remembered only for as long as SwiftList
-keeps running — quitting the app (not just closing the window) resets sorting back to the default
-the next time you open it, unlike the column/sidebar order above which is saved permanently.
+Clicking a results-grid column header cycles through three states: ascending, descending, then a
+third click resets it back to the default relevance-ranked order (the header's sort arrow
+disappears). This is remembered only for as long as SwiftList keeps running — quitting the app (not
+just closing the window) resets sorting back to the default the next time you open it, unlike the
+column/sidebar order above which is saved permanently.
 
 ## Preview
 
@@ -112,10 +123,29 @@ with content. See [Actions Menu & Preview](../actions-and-preview) for how the p
 
 Sets the order the [Quick Navigation](../hotkeys#quick-navigation-mouse) menu's root-level sections
 appear in — one section per contributing provider (e.g. Favorites/History/configured folders, Total
-Commander's Directory Hotlist, a plugin's own quick-nav entries), each labeled with its own header.
+Commander's Directory Hotlist, Directory Opus's Favorites, a plugin's own quick-nav entries), each
+labeled with its own header.
 
 **Provider Order** — the same up/down-arrow (or drag-to-reorder) list used elsewhere in Settings (see
 [Favorites](./favorites)): move a provider up or down to change where its section lands relative to
 the others. Only providers whose plugin component is currently enabled are listed here — one
 disabled under [Plugins](./plugins) never becomes a menu candidate in the first place, so there's
 nothing to order for it.
+
+## Preview & Thumbnails
+
+Two independent priority-order lists, each deciding which provider gets first refusal for its own
+job — normally decided purely by each provider's own fixed, built-in priority, with no way to change
+that short of disabling a provider entirely.
+
+**File Preview Provider Order** — for [file preview providers](../actions-and-preview#quicklook-preview)
+(for example, the [QuickLook Bridge](../actions-and-preview#external-preview-via-quicklook-optional)
+plugin sets its own priority above every built-in previewer). The same up/down-arrow (or
+drag-to-reorder) list used elsewhere in Settings (see [Favorites](./favorites)): move a provider up
+to make it always win over the ones below it, regardless of its own built-in priority. Only
+providers whose plugin component is currently enabled are listed here — one disabled under
+[Plugins](./plugins) would never actually preview anything anyway.
+
+**Thumbnail Provider Order** — same mechanic, for the icons/thumbnails shown next to results in the
+search list itself (as opposed to the preview pane) — most relevant once more than one plugin
+implements a custom thumbnail provider, since only one built-in provider exists today.

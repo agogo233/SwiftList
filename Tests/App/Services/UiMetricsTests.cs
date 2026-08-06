@@ -113,15 +113,19 @@ public sealed class UiMetricsTests
     public void MenuItemHeight_IsEightyPercentOfListItemHeight() =>
         Assert.AreEqual(UiMetrics.BaseListItemHeight * 0.8, UiMetrics.MenuItemHeight);
 
+    // InlineRowHeight/InlineIconSize are literal design constants (not derived from
+    // BaseSearchResultItemHeight/a ratio) precisely so they CAN'T silently drift apart -- this pins the
+    // one invariant that actually matters instead: the icon plus its margin must still fit inside the
+    // row, or InlineSearchResult.xaml's icon would overflow InlineItemHeight's own row height.
+    //
+    // Written as a comparison assertion rather than IsTrue over a boolean: all three are const, so the
+    // compiler folds the comparison and the analyzer rightly reports an IsTrue whose condition is always
+    // true. It still guarded the invariant -- change a constant and the folded value becomes false --
+    // but the dedicated assertion says the same thing without looking like a tautology, and reports the
+    // two numbers when it fails instead of just "expected true".
     [TestMethod]
-    public void BaseInlineItemHeight_IsRoundedSeventyPercentOfBaseResultItemHeight() =>
-        Assert.AreEqual(Math.Round(UiMetrics.BaseSearchResultItemHeight * 0.7), UiMetrics.BaseInlineItemHeight);
-
-    [TestMethod]
-    public void InlineResultIconSize_IsInlineItemHeightMinusMarginAndBreathingRoom() =>
-        Assert.AreEqual(
-            UiMetrics.BaseInlineItemHeight - UiMetrics.ResultRowVerticalMargin - UiMetrics.IconRowBreathingRoom,
-            UiMetrics.InlineResultIconSize);
+    public void InlineIconSize_FitsWithinInlineRowHeight() =>
+        Assert.IsLessThanOrEqualTo(UiMetrics.InlineRowHeight, UiMetrics.InlineIconSize + UiMetrics.ResultRowVerticalMargin);
 
     [TestMethod]
     public void ScaledNormalRowHeight_AtFlowReferenceHeight_RowHeightWins()

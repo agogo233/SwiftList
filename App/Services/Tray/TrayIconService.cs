@@ -18,8 +18,12 @@ public class TrayIconService : IDisposable
     private readonly Action _toggleVisibilityAction;
     private IntPtr _hIcon = IntPtr.Zero;
 
+    /// <summary>The active tray service, available after the Quick window initializes it.</summary>
+    public static TrayIconService? Instance { get; private set; }
+
     private System.Windows.Controls.ContextMenu? _wpfContextMenu;
     private System.Windows.Controls.MenuItem? _wpfItemShowWindow;
+    private System.Windows.Controls.MenuItem? _wpfItemSendToOtherDevices;
     private System.Windows.Controls.MenuItem? _wpfItemToggleHotkeys;
     private System.Windows.Controls.MenuItem? _wpfItemSettings;
     private System.Windows.Controls.MenuItem? _wpfItemAbout;
@@ -40,6 +44,8 @@ public class TrayIconService : IDisposable
         ThemeManager.Instance.ThemeChanged += UpdateTrayIconThemeColor;
         TranslationManager.Instance.PropertyChanged += OnLanguageChanged;
         UpdateMenuTexts();
+
+        Instance = this;
     }
 
     private void OnLanguageChanged(object? sender, System.ComponentModel.PropertyChangedEventArgs e) => UpdateMenuTexts();
@@ -129,6 +135,12 @@ public class TrayIconService : IDisposable
             else ShowSearchWindow();
         };
 
+        _wpfItemSendToOtherDevices = new System.Windows.Controls.MenuItem
+        {
+            Icon = CreateIcon("\uE709", "MenuText")
+        };
+        _wpfItemSendToOtherDevices.Click += (s, e) => ShowSendToOtherDevicesWindow();
+
         _wpfItemToggleHotkeys = new System.Windows.Controls.MenuItem();
         _wpfItemToggleHotkeys.Click += (s, e) => ToggleHotkeys();
 
@@ -157,6 +169,7 @@ public class TrayIconService : IDisposable
         _wpfItemExit.Click += (s, e) => Application.Current.Shutdown();
 
         _wpfContextMenu.Items.Add(_wpfItemShowWindow);
+        _wpfContextMenu.Items.Add(_wpfItemSendToOtherDevices);
         _wpfContextMenu.Items.Add(_wpfItemToggleHotkeys);
         _wpfContextMenu.Items.Add(_wpfItemSettings);
         _wpfContextMenu.Items.Add(new System.Windows.Controls.Separator());
@@ -250,6 +263,12 @@ public class TrayIconService : IDisposable
             InitializeWpfContextMenu();
         }
         UpdateCleanExitVisibility();
+
+        if (_wpfItemSendToOtherDevices != null)
+        {
+            var isLocalSendEnabled = UserSettings.Load().LocalSend.Enabled;
+            _wpfItemSendToOtherDevices.Visibility = isLocalSendEnabled ? Visibility.Visible : Visibility.Collapsed;
+        }
     }
 
     // Applies a live change to the "hide tray icon" setting: toggles the actual NotifyIcon and hands
@@ -266,11 +285,24 @@ public class TrayIconService : IDisposable
     private void UpdateMenuTexts()
     {
         _wpfItemShowWindow?.Header = TranslationManager.Instance["Tray_ShowWindow"];
+        _wpfItemSendToOtherDevices?.Header = TranslationManager.Instance["Tray_SendToOtherDevices"];
         _wpfItemSettings?.Header = TranslationManager.Instance["Tray_Settings"];
         _wpfItemAbout?.Header = TranslationManager.Instance["Tray_About"];
         _wpfItemCleanExit?.Header = TranslationManager.Instance["Tray_CleanExit"];
         _wpfItemExit?.Header = TranslationManager.Instance["Tray_Exit"];
         UpdateHotkeysMenuState();
+    }
+
+    private static void ShowSendToOtherDevicesWindow()
+    {
+        try
+        {
+            Helpers.LocalSend.LocalSendAppEventHandler.OpenSendWindow();
+        }
+        catch (Exception ex)
+        {
+            Logger.Log($"[TrayIconService] Failed to show LocalSend send window: {ex.Message}", LogLevel.Error);
+        }
     }
 
     private void ToggleHotkeys()
@@ -323,6 +355,35 @@ public class TrayIconService : IDisposable
 
     private void UpdateCleanExitVisibility() => _wpfItemCleanExit?.Visibility = TrayCleanExitHelper.IsOnlyAppProcessRunning() ? Visibility.Visible : Visibility.Collapsed;
 
+    /// <summary>
+    /// Shows a balloon tip notification from the system tray icon.
+    /// <paramref name="onClick"/> is invoked on the UI thread when the user clicks the balloon.
+    /// </summary>
+    public void ShowBalloonTip(string title, string text, ToolTipIcon icon = ToolTipIcon.Info, Action? onClick = null)
+    {
+        if (_notifyIcon == null) return;
+
+        // Force icon visible for the duration of the balloon even if HideTrayIcon is on;
+        // Windows will not show the balloon at all if the icon is hidden.
+        _notifyIcon.Visible = true;
+
+        if (onClick != null)
+        {
+            EventHandler balloonClicked = null!;
+            balloonClicked = (s, e) =>
+            {
+                _notifyIcon.BalloonTipClicked -= balloonClicked;
+                onClick();
+            };
+            _notifyIcon.BalloonTipClicked += balloonClicked;
+        }
+
+        _notifyIcon.ShowBalloonTip(5000, title, text, icon);
+
+        // Restore the configured visibility after the balloon has shown.
+        ApplyTrayIconVisible();
+    }
+
     public void Dispose()
     {
         ThemeManager.Instance.ThemeChanged -= UpdateTrayIconThemeColor;
@@ -332,5 +393,7 @@ public class TrayIconService : IDisposable
         if (_dummyWindow != null) { try { _dummyWindow.Close(); } catch { } _dummyWindow = null; }
         if (_notifyIcon != null) { _notifyIcon.Visible = false; _notifyIcon.Dispose(); _notifyIcon = null; }
         if (_hIcon != IntPtr.Zero) { DestroyIcon(_hIcon); _hIcon = IntPtr.Zero; }
+
+        if (Instance == this) Instance = null;
     }
 }

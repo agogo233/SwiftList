@@ -101,7 +101,7 @@ internal static class PipeResponseStatusSerializer
                 State = state,
                 Files = files,
                 Dirs = dirs,
-                CachePath = cachePath
+                CachePath = cachePath,
             });
         }
         return status;

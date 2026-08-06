@@ -14,6 +14,76 @@ public sealed class SearchRequestBinarySerializerTests
     }
 
     [TestMethod]
+    public async Task RoundTrip_Search_PreservesExactMatchFlag()
+    {
+        foreach (var id in new[] { SearchRequestId.Search, SearchRequestId.SearchDir })
+        {
+            var result = await RoundTripAsync(new SearchRequestMessage
+            {
+                Id = id,
+                Query = "report",
+                DirectoryFilter = @"C:\docs",
+                Limit = 51,
+                AppLimit = 51,
+                ExactMatch = true
+            });
+
+            Assert.IsTrue(result.ExactMatch, $"{id} lost the flag");
+            // The flag is written after the alias list, so a wrong payload size would corrupt
+            // whatever precedes it rather than only the flag itself.
+            Assert.AreEqual("report", result.Query);
+            Assert.AreEqual(51, result.Limit);
+        }
+    }
+
+    [TestMethod]
+    public async Task RoundTrip_Search_DefaultsToFuzzyWhenFlagNeverSet()
+    {
+        // SearchRequestMessage is a struct and cannot carry a field initializer, so the wire flag is
+        // phrased as the negative: a caller that never touches it must still get fuzzy matching.
+        var result = await RoundTripAsync(new SearchRequestMessage { Id = SearchRequestId.Search, Query = "report" });
+
+        Assert.IsFalse(result.ExactMatch);
+    }
+
+    [TestMethod]
+    public async Task RoundTrip_EnumerateDir_PreservesDirectoryFilterPatternAndRecursion()
+    {
+        var result = await RoundTripAsync(new SearchRequestMessage
+        {
+            Id = SearchRequestId.EnumerateDir,
+            DirectoryFilter = @"C:\Program Files\某个目录",
+            Query = "*.exe;*.lnk",
+            Recursive = true,
+            Limit = 0
+        });
+
+        Assert.AreEqual(SearchRequestId.EnumerateDir, result.Id);
+        Assert.AreEqual(@"C:\Program Files\某个目录", result.DirectoryFilter);
+        Assert.AreEqual("*.exe;*.lnk", result.Query);
+        Assert.IsTrue(result.Recursive);
+        Assert.AreEqual(0, result.Limit);
+    }
+
+    // Same struct-default reasoning as ExactMatch: the flag is written last, so a caller that never
+    // sets it must come out as the cheap single-level listing rather than a whole subtree walk.
+    [TestMethod]
+    public async Task RoundTrip_EnumerateDir_DefaultsToNonRecursive()
+    {
+        var result = await RoundTripAsync(new SearchRequestMessage
+        {
+            Id = SearchRequestId.EnumerateDir,
+            DirectoryFilter = @"C:\docs",
+            Query = "*",
+            Limit = 25
+        });
+
+        Assert.IsFalse(result.Recursive);
+        Assert.AreEqual(25, result.Limit);
+        Assert.AreEqual(@"C:\docs", result.DirectoryFilter);
+    }
+
+    [TestMethod]
     public async Task RoundTrip_NoPayloadRequest_PreservesId()
     {
         var result = await RoundTripAsync(new SearchRequestMessage { Id = SearchRequestId.Ping });

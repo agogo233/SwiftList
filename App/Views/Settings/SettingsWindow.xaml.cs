@@ -1,13 +1,15 @@
 using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Input;
-using SwiftList.App.Helpers;
-using SwiftList.App.Services;
 using SwiftList.App.ViewModels.Settings;
 
 using SwiftList.App.Services.ShellIcons;
 using SwiftList.App.Services.Theme;
 using SwiftList.App.Helpers.Visuals;
+using SwiftList.App.Views.Settings;
+using SwiftList.App.Views.Settings.General;
+using SwiftList.App.Views.Settings.Hotkey;
+using SwiftList.App.Views.Settings.Plugins;
 namespace SwiftList.App;
 
 // Window chrome and the sidebar's own section-switching. Search box/popup logic lives in
@@ -18,12 +20,60 @@ public partial class SettingsWindow : Window
 {
     private int _validationErrorCount;
 
+    // Lazily constructed on first visit instead of all being built (and their full visual trees
+    // realized) up front -- see issue #186: opening even a single cheap tab like About used to pay for
+    // every other tab's construction too. AddPage parents each one into PagesHost (see SettingsWindow.xaml)
+    // the first time its property is touched; ApplySelectedSection only ever touches the tab it's
+    // switching to (plus whichever was already visible), never the untouched ones, so tabs the user never
+    // visits stay unbuilt for the whole window's lifetime.
+    private ServiceSettingsPage? _pageService;
+    private IndexSettingsPage? _pageIndex;
+    private GeneralSettingsPage? _pageGeneral;
+    private AppearanceSettingsPage? _pageAppearance;
+    private HotkeySettingsPage? _pageHotkeys;
+    private PluginManagementSettingsPage? _pagePlugins;
+    private HistorySettingsPage? _pageHistory;
+    private FavoritesSettingsPage? _pageFavorites;
+    private Views.Settings.QuickPanel.QuickPanelSettingsPage? _pageQuickPanel;
+    private Views.Settings.LocalSend.LocalSendSettingsPage? _pageLocalSend;
+    private AboutSettingsPage? _pageAbout;
+    private FrameworkElement? _currentPage;
+
+    internal ServiceSettingsPage PageService => _pageService ??= AddPage(new ServiceSettingsPage());
+    internal IndexSettingsPage PageIndex => _pageIndex ??= AddPage(new IndexSettingsPage());
+    internal GeneralSettingsPage PageGeneral => _pageGeneral ??= AddPage(new GeneralSettingsPage());
+    internal AppearanceSettingsPage PageAppearance => _pageAppearance ??= AddPage(new AppearanceSettingsPage());
+    // Hotkeys/Plugins/History/Favorites set their own DataContext explicitly (previously done
+    // via SettingsWindow.xaml's DataContext="{Binding Xxx}") -- the rest inherit it from this Window like
+    // before, since inherited DataContext still flows correctly through a subtree added via
+    // Children.Add rather than markup.
+    internal HotkeySettingsPage PageHotkeys => _pageHotkeys ??= AddPage(new HotkeySettingsPage { DataContext = ((SettingsViewModel)DataContext).Hotkeys });
+    internal PluginManagementSettingsPage PagePlugins => _pagePlugins ??= AddPage(new PluginManagementSettingsPage { DataContext = ((SettingsViewModel)DataContext).Plugins });
+    internal HistorySettingsPage PageHistory => _pageHistory ??= AddPage(new HistorySettingsPage { DataContext = ((SettingsViewModel)DataContext).History });
+    internal FavoritesSettingsPage PageFavorites => _pageFavorites ??= AddPage(new FavoritesSettingsPage { DataContext = ((SettingsViewModel)DataContext).Favorites });
+    internal Views.Settings.QuickPanel.QuickPanelSettingsPage PageQuickPanel => _pageQuickPanel ??= AddPage(new Views.Settings.QuickPanel.QuickPanelSettingsPage { DataContext = ((SettingsViewModel)DataContext).QuickPanel });
+    internal Views.Settings.LocalSend.LocalSendSettingsPage PageLocalSend => _pageLocalSend ??= AddPage(new Views.Settings.LocalSend.LocalSendSettingsPage { DataContext = ((SettingsViewModel)DataContext).LocalSend });
+    internal AboutSettingsPage PageAbout => _pageAbout ??= AddPage(new AboutSettingsPage());
+
+    private T AddPage<T>(T page) where T : FrameworkElement
+    {
+        page.Visibility = Visibility.Collapsed;
+        PagesHost.Children.Add(page);
+        return page;
+    }
+
     public SettingsWindow()
     {
         InitializeComponent();
+        // Menu only. This window has custom chrome, so Alt+Space would drop an OS-drawn box clipped by
+        // its own rounded corners, but it is an ordinary window the user opens and is done with, so
+        // Alt+F4 stays working.
+        SystemMenuBlocker.Attach(this, blockClose: false);
+        // Same WM_GETMINMAXINFO interception the full search window uses. A borderless window maximizes
+        // to the whole monitor rather than its work area, so without this it covers the taskbar.
+        MaximizeBoundsHelper.Attach(this);
         ThemedWindowIconHelper.Apply(this);
         ThemedWindowIconHelper.Apply(TitleBarLogo, this);
-        SystemMenuBlocker.Attach(this);
         var vm = new SettingsViewModel();
         DataContext = vm;
         Loaded += (_, _) =>
@@ -110,7 +160,7 @@ public partial class SettingsWindow : Window
     // jump+highlight a typed search-box match would trigger) rather than duplicating its section/tab-
     // selection and highlight logic.
     //
-    // Passes this window's own real DataContext (needed so the Plugins/Hotkeys/StartupPanel dynamic
+    // Passes this window's own real DataContext (needed so the Plugins/Hotkeys dynamic
     // entries' Reveal step resolves against the SAME live-bound objects actually in the visual tree --
     // otherwise ContainerFromItem never finds a match and the highlight silently no-ops), but
     // evaluateConditionalVisibility: false so the static IsVisible-gated entries (WSL tab, etc.) are
@@ -128,11 +178,39 @@ public partial class SettingsWindow : Window
 
     private void TitleBar_MouseLeftButtonDown(object sender, MouseButtonEventArgs e)
     {
-        if (e.ButtonState == MouseButtonState.Pressed)
-            DragMove();
+        if (e.ButtonState != MouseButtonState.Pressed) return;
+
+        if (e.ClickCount == 2)
+        {
+            ToggleMaximize();
+            return;
+        }
+
+        WindowMaximizedDragHelper.DragMoveOrRestore(this, e);
     }
 
     private void BtnMinimize_Click(object sender, RoutedEventArgs e) => WindowState = WindowState.Minimized;
+
+    private void BtnMaximize_Click(object sender, RoutedEventArgs e) => ToggleMaximize();
+
+    private void ToggleMaximize() =>
+        WindowState = WindowState == WindowState.Maximized ? WindowState.Normal : WindowState.Maximized;
+
+    // Custom chrome draws its own rounded frame with a margin for the drop shadow. Maximized, both are
+    // wrong: the rounding leaves cut corners against the screen edge and the margin leaves a gap round
+    // the whole window, so they are flattened while maximized and restored afterwards. Mirrors the full
+    // search window's SearchWindowChromeHandler.HandleStateChanged.
+    private void Window_StateChanged(object sender, EventArgs e)
+    {
+        var maximized = WindowState == WindowState.Maximized;
+
+        BtnMaximize.Content = maximized ? "" : "";
+
+        MainBorder.CornerRadius = maximized ? new CornerRadius(0) : new CornerRadius(10);
+        MainBorder.Margin = maximized ? new Thickness(0) : new Thickness(8);
+        MainBorder.BorderThickness = new Thickness(maximized ? 0 : 1);
+        ClippingBorder.CornerRadius = maximized ? new CornerRadius(0) : new CornerRadius(10);
+    }
 
     private void BtnClose_Click(object sender, RoutedEventArgs e) => Close();
 
@@ -159,23 +237,17 @@ public partial class SettingsWindow : Window
 
     private void ApplySelectedSection(string tag)
     {
-        if (PageIndex == null)
-            return;
-
         // Covers navigating via the sidebar directly while a search popup happens to be open (typed a
         // query, then clicked a section instead of a result) -- clearing the text closes the popup too.
         TxtSettingsSearch.Text = string.Empty;
 
-        PageService?.Visibility = tag == "Service" ? Visibility.Visible : Visibility.Collapsed;
+        // Only ever touches the page being left (already built, cheap to hide) and the page being
+        // entered (this.GetSectionPage lazily constructs it on first visit) -- never the other, still
+        // untouched tabs, which is the whole point of the lazy PageXxx properties above.
+        _currentPage?.Visibility = Visibility.Collapsed;
 
-        PageIndex.Visibility = tag == "Index" ? Visibility.Visible : Visibility.Collapsed;
-        PageGeneral.Visibility = tag == "General" ? Visibility.Visible : Visibility.Collapsed;
-        PageAppearance.Visibility = tag == "Appearance" ? Visibility.Visible : Visibility.Collapsed;
-        PageHotkeys.Visibility = tag == "Hotkeys" ? Visibility.Visible : Visibility.Collapsed;
-        PagePlugins.Visibility = tag == "Plugins" ? Visibility.Visible : Visibility.Collapsed;
-        PageHistory.Visibility = tag == "History" ? Visibility.Visible : Visibility.Collapsed;
-        PageFavorites.Visibility = tag == "Favorites" ? Visibility.Visible : Visibility.Collapsed;
-        PageStartupPanel.Visibility = tag == "StartupPanel" ? Visibility.Visible : Visibility.Collapsed;
-        PageAbout.Visibility = tag == "About" ? Visibility.Visible : Visibility.Collapsed;
+        var page = this.GetSectionPage(tag);
+        page?.Visibility = Visibility.Visible;
+        _currentPage = page;
     }
 }

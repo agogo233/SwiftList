@@ -28,12 +28,22 @@ public partial class SearchWindow : Window, ISearchWindow, IHasVisibleContentIns
     // Must match SearchWindow.xaml's MainBorder Margin.
     public Thickness VisibleContentInset => new(8);
 
-    public SearchWindow(string initialQuery = "")
+    // Whether to reopen the preview once this window has a first result to show it for. Applied then
+    // rather than now because there is nothing to preview yet, and because the quick window this is
+    // replacing is still finishing its own hide -- the tail of that clears its query, which re-fires its
+    // selection handler and would close a preview opened any earlier.
+    private bool _restorePreviewOnFirstResult;
+
+    public SearchWindow(string initialQuery = "", bool restorePreview = false)
     {
         InitializeComponent();
+        _restorePreviewOnFirstResult = restorePreview;
 
+        // Menu only, same as the settings window: custom chrome makes the OS system menu a clipped box
+        // with nothing useful in it, but Alt+F4 on a window the user opened and is done with should
+        // close it as usual.
+        SystemMenuBlocker.Attach(this, blockClose: false);
         ThemedWindowIconHelper.Apply(this);
-        SystemMenuBlocker.Attach(this);
 
         // XAML's Height/Width are just the design-time/factory-reset default -- the real size (user's
         // last resize, or the General settings page value) comes from UiMetrics, mirroring how
@@ -57,7 +67,7 @@ public partial class SearchWindow : Window, ISearchWindow, IHasVisibleContentIns
 
         this.Loaded += (s, e) =>
         {
-            SearchWindowMaximizeBoundsHelper.Attach(this);
+            MaximizeBoundsHelper.Attach(this);
 
             this.Activate();
             this.Focus();
@@ -85,11 +95,23 @@ public partial class SearchWindow : Window, ISearchWindow, IHasVisibleContentIns
         {
             if (activeList.SelectedItem is AppSearchResult result && result.CanPreview)
             {
-                QuickLookManager.Instance.UpdateOrShow(this, result.FullPath);
+                if (_restorePreviewOnFirstResult)
+                {
+                    _restorePreviewOnFirstResult = false;
+                    QuickLookManager.Instance.Open(this, result.FullPath);
+                }
+                else
+                {
+                    QuickLookManager.Instance.UpdateOrShow(this, result.FullPath);
+                }
             }
-            else
+            // No selection at all, with rows present, means the list is mid-rebuild rather than sitting
+            // on something unpreviewable. A search that is still streaming repaints several times, and a
+            // repaint clears the selection before restoring it -- so treating that gap as "hide" tore the
+            // preview down and rebuilt it on every paint, which is what made it flash once and give up.
+            else if (activeList.Items.Count == 0 || activeList.SelectedItem != null)
             {
-                QuickLookManager.Instance.Hide();
+                QuickLookManager.Instance.HideFrom(this);
             }
         };
 

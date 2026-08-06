@@ -35,9 +35,10 @@ public class HotkeySettingsViewModel : ViewModelBase
         _keywordHistoryPreviousHotkey = hotkeys.KeywordHistoryPreviousHotkey;
         _keywordHistoryNextHotkey = hotkeys.KeywordHistoryNextHotkey;
         _keywordHistoryDeleteHotkey = hotkeys.KeywordHistoryDeleteHotkey;
-        _startupPanelNextTabHotkey = hotkeys.StartupPanelNextTabHotkey;
-        _startupPanelPreviousTabHotkey = hotkeys.StartupPanelPreviousTabHotkey;
         _openFullWindowHotkey = hotkeys.OpenFullWindowHotkey;
+        _localSendSendWindowHotkey = hotkeys.LocalSendSendWindowHotkey;
+        _stayOpenHotkey = hotkeys.StayOpenHotkey;
+        _quickPanelHotkey = hotkeys.QuickPanelHotkey;
 
         PluginActionGroups = BuildPluginActionGroups(hotkeys.PluginActionHotkeys);
 
@@ -220,25 +221,34 @@ public class HotkeySettingsViewModel : ViewModelBase
         set => SetProperty(ref _keywordHistoryDeleteHotkey, value);
     }
 
-    private string _startupPanelNextTabHotkey;
-    public string StartupPanelNextTabHotkey
-    {
-        get => _startupPanelNextTabHotkey;
-        set => SetProperty(ref _startupPanelNextTabHotkey, value);
-    }
-
-    private string _startupPanelPreviousTabHotkey;
-    public string StartupPanelPreviousTabHotkey
-    {
-        get => _startupPanelPreviousTabHotkey;
-        set => SetProperty(ref _startupPanelPreviousTabHotkey, value);
-    }
-
     private string _openFullWindowHotkey;
     public string OpenFullWindowHotkey
     {
         get => _openFullWindowHotkey;
         set => SetProperty(ref _openFullWindowHotkey, value);
+    }
+
+    private string _quickPanelHotkey;
+
+    /// <summary>Global, detected by the hook service rather than by a focused window.</summary>
+    public string QuickPanelHotkey
+    {
+        get => _quickPanelHotkey;
+        set => SetProperty(ref _quickPanelHotkey, value);
+    }
+
+    private string _stayOpenHotkey;
+    public string StayOpenHotkey
+    {
+        get => _stayOpenHotkey;
+        set => SetProperty(ref _stayOpenHotkey, value);
+    }
+
+    private string _localSendSendWindowHotkey;
+    public string LocalSendSendWindowHotkey
+    {
+        get => _localSendSendWindowHotkey;
+        set => SetProperty(ref _localSendSendWindowHotkey, value);
     }
 
     public void Apply()
@@ -261,9 +271,10 @@ public class HotkeySettingsViewModel : ViewModelBase
         hotkeys.KeywordHistoryPreviousHotkey = KeywordHistoryPreviousHotkey;
         hotkeys.KeywordHistoryNextHotkey = KeywordHistoryNextHotkey;
         hotkeys.KeywordHistoryDeleteHotkey = KeywordHistoryDeleteHotkey;
-        hotkeys.StartupPanelNextTabHotkey = StartupPanelNextTabHotkey;
-        hotkeys.StartupPanelPreviousTabHotkey = StartupPanelPreviousTabHotkey;
         hotkeys.OpenFullWindowHotkey = OpenFullWindowHotkey;
+        hotkeys.LocalSendSendWindowHotkey = LocalSendSendWindowHotkey;
+        hotkeys.StayOpenHotkey = StayOpenHotkey;
+        hotkeys.QuickPanelHotkey = QuickPanelHotkey;
 
         var pluginActionHotkeys = new Dictionary<string, Dictionary<string, string>>(StringComparer.OrdinalIgnoreCase);
         foreach (var group in PluginActionGroups)

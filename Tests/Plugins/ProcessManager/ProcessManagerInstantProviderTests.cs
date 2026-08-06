@@ -1,5 +1,3 @@
-using SwiftList.Plugins.ProcessManager;
-
 namespace SwiftList.Plugins.ProcessManager.Tests;
 
 [TestClass]
@@ -37,6 +35,18 @@ public sealed class ProcessManagerInstantProviderTests
         // trivially match any search term if this weren't guarded, matching every backgrounded process
         // regardless of what was actually typed.
         => Assert.IsNull(ProcessManagerInstantProvider.GetMatchTier("svchost", "999", "", "notepad"));
+
+    [TestMethod]
+    public void GetMatchTier_AnyVisibleWindowTitleCanMatch()
+    {
+        var tier = ProcessManagerInstantProvider.GetMatchTier(
+            "FSViewer",
+            "1234",
+            ["Settings", "Fast image viewer"],
+            "fast");
+
+        Assert.AreEqual(2, tier);
+    }
 }
 
 // FuzzyMatchService.IsMatchFunc is a shared static delegate (null by default -- IsMatch always returns
@@ -50,10 +60,10 @@ public sealed class ProcessManagerInstantProviderFuzzyMatchTests
 {
     [TestInitialize]
     public void WireFuzzyMatch() =>
-        SwiftList.PluginSdk.Services.FuzzyMatchService.IsMatchFunc = (pattern, text) => text.Contains(pattern, StringComparison.OrdinalIgnoreCase);
+        PluginSdk.Services.FuzzyMatchService.IsMatchFunc = (pattern, text) => text.Contains(pattern, StringComparison.OrdinalIgnoreCase);
 
     [TestCleanup]
-    public void Reset() => SwiftList.PluginSdk.Services.FuzzyMatchService.IsMatchFunc = null;
+    public void Reset() => PluginSdk.Services.FuzzyMatchService.IsMatchFunc = null;
 
     [TestMethod]
     public void GetMatchTier_NameOnlyMatchesViaFuzzyFallback_ReturnsTierThree()
@@ -61,7 +71,7 @@ public sealed class ProcessManagerInstantProviderFuzzyMatchTests
         // Neither the name, PID, nor title literally contain "daili" -- only the wired fuzzy matcher
         // (standing in for the host's real pinyin transliteration, e.g. matching "daili" against a
         // process/title containing "代理") recognizes it.
-        SwiftList.PluginSdk.Services.FuzzyMatchService.IsMatchFunc = (pattern, text) => pattern == "daili" && text.Contains("代理");
+        PluginSdk.Services.FuzzyMatchService.IsMatchFunc = (pattern, text) => pattern == "daili" && text.Contains("代理");
 
         var tier = ProcessManagerInstantProvider.GetMatchTier("代理进程", "1234", "", "daili");
 
@@ -71,7 +81,7 @@ public sealed class ProcessManagerInstantProviderFuzzyMatchTests
     [TestMethod]
     public void GetMatchTier_TitleOnlyMatchesViaFuzzyFallback_ReturnsTierThree()
     {
-        SwiftList.PluginSdk.Services.FuzzyMatchService.IsMatchFunc = (pattern, text) => pattern == "daili" && text.Contains("代理");
+        PluginSdk.Services.FuzzyMatchService.IsMatchFunc = (pattern, text) => pattern == "daili" && text.Contains("代理");
 
         var tier = ProcessManagerInstantProvider.GetMatchTier("chrome", "1234", "zashboard - 代理", "daili");
 
@@ -83,7 +93,7 @@ public sealed class ProcessManagerInstantProviderFuzzyMatchTests
     {
         // If a literal tier already matched, the fuzzy fallback must never even run -- returning false
         // here would still be correct only because it's never reached; this pins tier 0, not 3.
-        SwiftList.PluginSdk.Services.FuzzyMatchService.IsMatchFunc = (_, _) => false;
+        PluginSdk.Services.FuzzyMatchService.IsMatchFunc = (_, _) => false;
 
         var tier = ProcessManagerInstantProvider.GetMatchTier("notepad", "1234", "", "notepad");
 
@@ -93,7 +103,7 @@ public sealed class ProcessManagerInstantProviderFuzzyMatchTests
     [TestMethod]
     public void GetMatchTier_NothingMatchesAtAnyTier_ReturnsNull()
     {
-        SwiftList.PluginSdk.Services.FuzzyMatchService.IsMatchFunc = (_, _) => false;
+        PluginSdk.Services.FuzzyMatchService.IsMatchFunc = (_, _) => false;
 
         var tier = ProcessManagerInstantProvider.GetMatchTier("notepad", "1234", "Untitled", "calculator");
 

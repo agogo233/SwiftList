@@ -5,6 +5,7 @@
              xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
              xmlns:services="clr-namespace:SwiftList.App.Services"
              xmlns:conv="clr-namespace:SwiftList.App.Converters"
+             xmlns:local="clr-namespace:SwiftList.App.Views.Settings.Plugins"
              mc:Ignorable="d"
              d:DesignHeight="200" d:DesignWidth="660">
     <UserControl.Resources>
@@ -22,20 +23,21 @@
     </UserControl.Resources>
 
     <Border Style="{StaticResource SettingsCard}" Margin="0,0,0,12">
-        <StackPanel>
+        <Grid>
+            <Grid.RowDefinitions>
+                <RowDefinition Height="Auto"/>
+                <RowDefinition Height="Auto"/>
+                <RowDefinition Height="Auto"/>
+                <RowDefinition Height="*"/>
+            </Grid.RowDefinitions>
 
-            <!-- Plugin header row -->
-            <Grid Cursor="Hand">
-                <Grid.InputBindings>
-                    <MouseBinding MouseAction="LeftClick"
-                                  Command="{Binding DataContext.ToggleExpandCommand,
-                                            RelativeSource={RelativeSource AncestorType=ItemsControl}}"
-                                  CommandParameter="{Binding}"/>
-                </Grid.InputBindings>
+            <!-- Plugin header row. No longer clickable: this card is the detail pane for whichever
+                 plugin the list on the left has selected, so there is nothing left for clicking it to
+                 expand into. -->
+            <Grid Grid.Row="0">
                 <Grid.ColumnDefinitions>
                     <ColumnDefinition Width="Auto"/>
                     <ColumnDefinition Width="*"/>
-                    <ColumnDefinition Width="Auto"/>
                     <ColumnDefinition Width="Auto"/>
                     <ColumnDefinition Width="Auto"/>
                 </Grid.ColumnDefinitions>
@@ -47,9 +49,12 @@
                      page's still-colorful checkboxes and buttons, so the tile itself
                      stays neutral (HoverBackground) while the glyph keeps the accent
                      color, matching the common "neutral tile, colored icon" pattern. -->
-                <Border Grid.Column="0" Width="36" Height="36" CornerRadius="8"
+                <!-- Top, not centred: this row's height follows the description, which runs to however
+                     many lines the plugin's own summary needs, so a centred tile drifts further down
+                     the taller that gets and stops lining up with the name it belongs to. -->
+                <Border Grid.Column="0" Width="36" Height="36" CornerRadius="8" VerticalAlignment="Top"
                         Background="{DynamicResource HoverBackground}" Margin="0,0,12,0">
-                    <TextBlock Text="&#xECAA;" FontFamily="Segoe MDL2 Assets"
+                    <TextBlock Text="&#xEA86;" FontFamily="Segoe MDL2 Assets"
                                FontSize="16" Foreground="{DynamicResource AccentBlue}"
                                HorizontalAlignment="Center" VerticalAlignment="Center"/>
                 </Border>
@@ -59,205 +64,244 @@
                     <TextBlock Text="{Binding Name}"
                                FontSize="14" FontWeight="SemiBold"
                                Foreground="{DynamicResource TextPrimary}"/>
-                    <StackPanel Orientation="Horizontal" Margin="0,3,0,0">
-                        <TextBlock Text="{Binding Source={x:Static services:TranslationManager.Instance}, Path=[Plugins_Version]}"
-                                   Foreground="{DynamicResource TextSecondary2}" FontSize="11"/>
-                        <TextBlock Text=" " FontSize="11"/>
-                        <TextBlock Text="{Binding Version}"
-                                   Foreground="{DynamicResource TextPrimary2}" FontSize="11" FontWeight="SemiBold"/>
-                        <TextBlock Text="  ·  " Foreground="{DynamicResource SeparatorBrush}" FontSize="11"/>
-                        <TextBlock Text="{Binding DllFileName}"
-                                   Foreground="{DynamicResource TextSecondary2}" FontSize="11"/>
+                    <!-- The description, which used to be a tooltip behind a small (!) badge. There is
+                         room for it here now that the pane shows one plugin at a time, and a plugin's
+                         own summary is the thing most worth reading before deciding anything about it.
+                         The version and DLL name that used to sit on this line are gone: the version is
+                         already on this plugin's row in the list to the left, and the file name is
+                         detail nobody needs while choosing what to enable. -->
+                    <TextBlock Text="{Binding Description}" TextWrapping="Wrap" Margin="0,4,0,0"
+                               Foreground="{DynamicResource TextSecondary2}" FontSize="12">
+                        <TextBlock.Style>
+                            <Style TargetType="TextBlock">
+                                <Setter Property="Visibility" Value="Visible"/>
+                                <Style.Triggers>
+                                    <DataTrigger Binding="{Binding Description}" Value="">
+                                        <Setter Property="Visibility" Value="Collapsed"/>
+                                    </DataTrigger>
+                                    <DataTrigger Binding="{Binding Description}" Value="{x:Null}">
+                                        <Setter Property="Visibility" Value="Collapsed"/>
+                                    </DataTrigger>
+                                </Style.Triggers>
+                            </Style>
+                        </TextBlock.Style>
+                    </TextBlock>
+                </StackPanel>
+
+            </Grid>
+
+            <!-- Details / Config tabs header row. The Save Configuration button sits on the far right of this row
+                 and is visible only when the Config tab is active. -->
+            <Grid Grid.Row="1" Margin="0,16,0,0" Visibility="{Binding HasConfigFields, Converter={StaticResource BoolToVis}}">
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="Auto"/>
+                    <ColumnDefinition Width="*"/>
+                    <ColumnDefinition Width="Auto"/>
+                </Grid.ColumnDefinitions>
+
+                <StackPanel Grid.Column="0" Orientation="Horizontal">
+                    <StackPanel Margin="0,0,28,0">
+                        <Button Content="{Binding Source={x:Static services:TranslationManager.Instance}, Path=[Plugins_TabDetails]}"
+                                Command="{Binding ShowDetailsCommand}">
+                            <Button.Style>
+                                <Style TargetType="Button" BasedOn="{StaticResource TabHeaderButtonStyle}">
+                                    <Style.Triggers>
+                                        <DataTrigger Binding="{Binding IsConfigTab}" Value="False">
+                                            <Setter Property="Foreground" Value="{DynamicResource AccentBlue}"/>
+                                            <Setter Property="FontWeight" Value="SemiBold"/>
+                                        </DataTrigger>
+                                    </Style.Triggers>
+                                </Style>
+                            </Button.Style>
+                        </Button>
+                        <Border>
+                            <Border.Style>
+                                <Style TargetType="Border" BasedOn="{StaticResource TabUnderlineStyle}">
+                                    <Style.Triggers>
+                                        <DataTrigger Binding="{Binding IsConfigTab}" Value="False">
+                                            <Setter Property="Visibility" Value="Visible"/>
+                                        </DataTrigger>
+                                    </Style.Triggers>
+                                </Style>
+                            </Border.Style>
+                        </Border>
+                    </StackPanel>
+                    <StackPanel>
+                        <Button Content="{Binding Source={x:Static services:TranslationManager.Instance}, Path=[Common_Configure]}"
+                                Command="{Binding ShowConfigCommand}">
+                            <Button.Style>
+                                <Style TargetType="Button" BasedOn="{StaticResource TabHeaderButtonStyle}">
+                                    <Style.Triggers>
+                                        <DataTrigger Binding="{Binding IsConfigTab}" Value="True">
+                                            <Setter Property="Foreground" Value="{DynamicResource AccentBlue}"/>
+                                            <Setter Property="FontWeight" Value="SemiBold"/>
+                                        </DataTrigger>
+                                    </Style.Triggers>
+                                </Style>
+                            </Button.Style>
+                        </Button>
+                        <Border>
+                            <Border.Style>
+                                <Style TargetType="Border" BasedOn="{StaticResource TabUnderlineStyle}">
+                                    <Style.Triggers>
+                                        <DataTrigger Binding="{Binding IsConfigTab}" Value="True">
+                                            <Setter Property="Visibility" Value="Visible"/>
+                                        </DataTrigger>
+                                    </Style.Triggers>
+                                </Style>
+                            </Border.Style>
+                        </Border>
                     </StackPanel>
                 </StackPanel>
 
-                <!-- Plugin Description Info button (!) -->
-                <Border Grid.Column="2" Width="14" Height="14" CornerRadius="7"
-                        Background="{DynamicResource HoverBackground}"
-                        BorderBrush="{DynamicResource SeparatorBrush}" BorderThickness="1"
-                        Margin="8,0" VerticalAlignment="Center" Cursor="Help">
-                    <Border.ToolTip>
-                        <ToolTip MaxWidth="300">
-                            <TextBlock Text="{Binding Description}" TextWrapping="Wrap"/>
-                        </ToolTip>
-                    </Border.ToolTip>
-                    <Border.Style>
-                        <Style TargetType="Border">
-                            <Setter Property="Visibility" Value="Visible"/>
-                            <Style.Triggers>
-                                <DataTrigger Binding="{Binding Description}" Value="">
-                                    <Setter Property="Visibility" Value="Collapsed"/>
-                                </DataTrigger>
-                                <DataTrigger Binding="{Binding Description}" Value="{x:Null}">
-                                    <Setter Property="Visibility" Value="Collapsed"/>
-                                </DataTrigger>
-                            </Style.Triggers>
-                        </Style>
-                    </Border.Style>
-                    <TextBlock Text="!" FontSize="9" FontWeight="Bold"
-                               Foreground="{DynamicResource TextSecondary2}"
-                               HorizontalAlignment="Center" VerticalAlignment="Center" Margin="0,-1,0,0"/>
-                </Border>
-
-                <!-- Configure Button -->
-                <Button Grid.Column="3"
-                        Command="{Binding DataContext.ConfigurePluginCommand, RelativeSource={RelativeSource AncestorType=ItemsControl}}"
+                <!-- Save Configuration button positioned to the right of the Config tab -->
+                <Button Grid.Column="2"
+                        Style="{StaticResource PrimarySettingsButton}"
+                        MinWidth="80"
+                        VerticalAlignment="Center"
+                        Content="{Binding Source={x:Static services:TranslationManager.Instance}, Path=[Plugins_SaveConfig]}"
+                        Command="{Binding DataContext.SaveConfigCommand, RelativeSource={RelativeSource AncestorType={x:Type local:PluginManagementSettingsPage}}}"
                         CommandParameter="{Binding}"
-                        Visibility="{Binding HasConfigFields, Converter={StaticResource BoolToVis}}"
-                        Style="{StaticResource SettingsButton}"
-                        ContentTemplate="{x:Null}"
-                        Margin="4,0" Padding="8,4" VerticalAlignment="Center" Focusable="False">
-                    <StackPanel Orientation="Horizontal">
-                        <TextBlock Text="&#xE713;" FontFamily="Segoe MDL2 Assets" FontSize="12" Margin="0,0,4,0" VerticalAlignment="Center"/>
-                        <TextBlock Text="{Binding Source={x:Static services:TranslationManager.Instance}, Path=[Common_Configure]}"  FontSize="11" VerticalAlignment="Center"/>
-                    </StackPanel>
-                </Button>
-
-                <!-- Expand/collapse chevron -->
-                <TextBlock Grid.Column="4" FontFamily="Segoe MDL2 Assets"
-                           FontSize="10" Foreground="{DynamicResource TextSecondary2}"
-                           VerticalAlignment="Center" Margin="8,0,0,0">
-                    <TextBlock.Style>
-                        <Style TargetType="TextBlock">
-                            <Setter Property="Text" Value="&#xE70E;"/>
-                            <Style.Triggers>
-                                <DataTrigger Binding="{Binding IsExpanded}" Value="False">
-                                    <Setter Property="Text" Value="&#xE70D;"/>
-                                </DataTrigger>
-                            </Style.Triggers>
-                        </Style>
-                    </TextBlock.Style>
-                </TextBlock>
+                        Visibility="{Binding IsConfigTab, Converter={StaticResource BoolToVis}}"/>
             </Grid>
 
-            <!-- Components section (collapsible) -->
-            <StackPanel Margin="0,12,0,0"
-                        Visibility="{Binding IsExpanded, Converter={StaticResource BoolToVis}}">
+            <!-- Fixed hairline divider line below the tab header row -->
+            <Border Grid.Row="2" Height="1" Background="{DynamicResource SettingsRowBorderBrush}" Margin="0,12,0,0"
+                    Visibility="{Binding HasConfigFields, Converter={StaticResource BoolToVis}}"/>
 
-                <Border Height="1" Background="{DynamicResource SeparatorBrush}" Margin="0,0,0,10"/>
+            <!-- Content area below the tab header bar and divider line -->
+            <Grid Grid.Row="3" Margin="0,4,0,0">
+                <!-- Config tab: manages its own fixed sub-tab header bar and scrollable field area -->
+                <local:PluginConfigSection Visibility="{Binding IsConfigTab, Converter={StaticResource BoolToVis}}"/>
 
-                <Grid Margin="0,0,0,12">
-                    <Grid.ColumnDefinitions>
-                        <ColumnDefinition Width="Auto"/>
-                        <ColumnDefinition Width="*"/>
-                    </Grid.ColumnDefinitions>
-                    <TextBlock Grid.Column="0"
-                               Text="{Binding Source={x:Static services:TranslationManager.Instance}, Path=[Plugins_ComponentsTitle]}"
-                               FontSize="11" FontWeight="SemiBold"
-                               Foreground="{DynamicResource TextSecondary2}" VerticalAlignment="Center"/>
-                    <Button Grid.Column="1" Content="{Binding SelectAllToggleLabel}" Command="{Binding ToggleAllComponentsCommand}"
-                            Style="{StaticResource LinkButton}" FontSize="11"
-                            HorizontalAlignment="Right" VerticalAlignment="Center"
-                            Visibility="{Binding HasToggleableComponents, Converter={StaticResource BoolToVis}}"/>
-                </Grid>
+                <!-- Details tab: the components this plugin provides, wrapped in its own ScrollViewer -->
+                <ScrollViewer Visibility="{Binding IsConfigTab, Converter={StaticResource InvertBoolToVis}}"
+                              VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled">
+                    <StackPanel Margin="0,12,0,0">
 
-                <!-- No components placeholder -->
-                <TextBlock Text="{Binding Source={x:Static services:TranslationManager.Instance}, Path=[Plugins_NoComponents]}"
-                           Foreground="{DynamicResource TextSecondary2}" FontSize="12"
-                           Visibility="{Binding HasNoComponents, Converter={StaticResource BoolToVis}}"/>
+                        <Grid Margin="0,0,0,12">
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="Auto"/>
+                                <ColumnDefinition Width="*"/>
+                            </Grid.ColumnDefinitions>
+                            <TextBlock Grid.Column="0"
+                                       Text="{Binding Source={x:Static services:TranslationManager.Instance}, Path=[Plugins_ComponentsTitle]}"
+                                       FontSize="11" FontWeight="SemiBold"
+                                       Foreground="{DynamicResource TextSecondary2}" VerticalAlignment="Center"/>
+                            <Button Grid.Column="1" Content="{Binding SelectAllToggleLabel}" Command="{Binding ToggleAllComponentsCommand}"
+                                    Style="{StaticResource LinkButton}" FontSize="11"
+                                    HorizontalAlignment="Right" VerticalAlignment="Center"
+                                    Visibility="{Binding HasToggleableComponents, Converter={StaticResource BoolToVis}}"/>
+                        </Grid>
 
-                <!-- Component Groups -->
-                <ItemsControl ItemsSource="{Binding ComponentGroups}">
-                    <ItemsControl.ItemTemplate>
-                        <DataTemplate>
-                            <StackPanel Margin="0,0,0,14">
-                                <!-- Group Header -->
-                                <Grid Margin="0,0,0,6">
-                                    <Grid.ColumnDefinitions>
-                                        <ColumnDefinition Width="Auto"/>
-                                        <ColumnDefinition Width="*"/>
-                                    </Grid.ColumnDefinitions>
-                                    <StackPanel Grid.Column="0" Orientation="Horizontal">
-                                        <Border Width="3" Height="12" CornerRadius="1"
-                                                Background="{Binding ComponentType, Converter={StaticResource TypeToBrush}}"
-                                                Margin="0,0,6,0" VerticalAlignment="Center"/>
-                                        <TextBlock Text="{Binding GroupName}"
-                                                   FontSize="11" FontWeight="Bold"
-                                                   Foreground="{Binding ComponentType, Converter={StaticResource TypeToBrush}}"
-                                                   VerticalAlignment="Center"/>
-                                    </StackPanel>
-                                    <Button Grid.Column="1" Content="{Binding SelectAllToggleLabel}" Command="{Binding ToggleAllCommand}"
-                                            Style="{StaticResource LinkButton}" FontSize="11"
-                                            HorizontalAlignment="Right" VerticalAlignment="Center"
-                                            Visibility="{Binding HasToggleableComponents, Converter={StaticResource BoolToVis}}"/>
-                                </Grid>
+                        <!-- No components placeholder -->
+                        <TextBlock Text="{Binding Source={x:Static services:TranslationManager.Instance}, Path=[Plugins_NoComponents]}"
+                                   Foreground="{DynamicResource TextSecondary2}" FontSize="12"
+                                   Visibility="{Binding HasNoComponents, Converter={StaticResource BoolToVis}}"/>
 
-                                <!-- Nested components -->
-                                <ItemsControl ItemsSource="{Binding Components}">
-                                    <ItemsControl.ItemTemplate>
-                                        <DataTemplate>
-                                            <Border Style="{StaticResource SettingsRow}" Padding="8,6" Margin="0,0,0,4">
-                                                <Grid>
-                                                    <Grid.ColumnDefinitions>
-                                                        <ColumnDefinition Width="*"/>
-                                                        <ColumnDefinition Width="28"/>
-                                                        <ColumnDefinition Width="28"/>
-                                                    </Grid.ColumnDefinitions>
+                        <!-- Component Groups -->
+                        <ItemsControl ItemsSource="{Binding ComponentGroups}">
+                            <ItemsControl.ItemTemplate>
+                                <DataTemplate>
+                                    <StackPanel Margin="0,0,0,14">
+                                        <!-- Group Header -->
+                                        <Grid Margin="0,0,0,6">
+                                            <Grid.ColumnDefinitions>
+                                                <ColumnDefinition Width="Auto"/>
+                                                <ColumnDefinition Width="*"/>
+                                            </Grid.ColumnDefinitions>
+                                            <StackPanel Grid.Column="0" Orientation="Horizontal">
+                                                <Border Width="3" Height="12" CornerRadius="1"
+                                                        Background="{Binding ComponentType, Converter={StaticResource TypeToBrush}}"
+                                                        Margin="0,0,6,0" VerticalAlignment="Center"/>
+                                                <TextBlock Text="{Binding GroupName}"
+                                                           FontSize="11" FontWeight="Bold"
+                                                           Foreground="{Binding ComponentType, Converter={StaticResource TypeToBrush}}"
+                                                           VerticalAlignment="Center"/>
+                                            </StackPanel>
+                                            <Button Grid.Column="1" Content="{Binding SelectAllToggleLabel}" Command="{Binding ToggleAllCommand}"
+                                                    Style="{StaticResource LinkButton}" FontSize="11"
+                                                    HorizontalAlignment="Right" VerticalAlignment="Center"
+                                                    Visibility="{Binding HasToggleableComponents, Converter={StaticResource BoolToVis}}"/>
+                                        </Grid>
 
-                                                    <TextBlock Grid.Column="0"
-                                                               Text="{Binding DisplayName}"
-                                                               FontSize="12"
-                                                               TextWrapping="Wrap"
-                                                               Foreground="{DynamicResource TextPrimary}"
-                                                               VerticalAlignment="Center"/>
+                                        <!-- Nested components -->
+                                        <ItemsControl ItemsSource="{Binding Components}">
+                                            <ItemsControl.ItemTemplate>
+                                                <DataTemplate>
+                                                    <Border Style="{StaticResource SettingsRow}" Padding="8,6" Margin="0,0,0,4">
+                                                        <Grid>
+                                                            <Grid.ColumnDefinitions>
+                                                                <ColumnDefinition Width="*"/>
+                                                                <ColumnDefinition Width="28"/>
+                                                                <ColumnDefinition Width="28"/>
+                                                            </Grid.ColumnDefinitions>
 
-                                                    <!-- Info button (!) -->
-                                                    <Border Grid.Column="1" Width="14" Height="14" CornerRadius="7"
-                                                            Background="{DynamicResource HoverBackground}"
-                                                            BorderBrush="{DynamicResource SeparatorBrush}" BorderThickness="1"
-                                                            HorizontalAlignment="Center" VerticalAlignment="Center" Cursor="Help">
-                                                        <Border.ToolTip>
-                                                            <ToolTip MaxWidth="300">
-                                                                <TextBlock Text="{Binding Description}" TextWrapping="Wrap"/>
-                                                            </ToolTip>
-                                                        </Border.ToolTip>
-                                                        <Border.Style>
-                                                            <Style TargetType="Border">
-                                                                <Setter Property="Visibility" Value="Visible"/>
-                                                                <Style.Triggers>
-                                                                    <DataTrigger Binding="{Binding Description}" Value="">
-                                                                        <Setter Property="Visibility" Value="Collapsed"/>
-                                                                    </DataTrigger>
-                                                                    <DataTrigger Binding="{Binding Description}" Value="{x:Null}">
-                                                                        <Setter Property="Visibility" Value="Collapsed"/>
-                                                                    </DataTrigger>
-                                                                </Style.Triggers>
-                                                            </Style>
-                                                        </Border.Style>
-                                                        <TextBlock Text="!" FontSize="9" FontWeight="Bold"
-                                                                   Foreground="{DynamicResource TextSecondary2}"
-                                                                   HorizontalAlignment="Center" VerticalAlignment="Center" Margin="0,-1,0,0"/>
+                                                            <TextBlock Grid.Column="0"
+                                                                       Text="{Binding DisplayName}"
+                                                                       FontSize="12"
+                                                                       TextWrapping="Wrap"
+                                                                       Foreground="{DynamicResource TextPrimary}"
+                                                                       VerticalAlignment="Center"/>
+
+                                                            <!-- Info button (!) -->
+                                                            <Border Grid.Column="1" Width="14" Height="14" CornerRadius="7"
+                                                                    Background="{DynamicResource HoverBackground}"
+                                                                    BorderBrush="{DynamicResource SeparatorBrush}" BorderThickness="1"
+                                                                    HorizontalAlignment="Center" VerticalAlignment="Center" Cursor="Help">
+                                                                <Border.ToolTip>
+                                                                    <ToolTip MaxWidth="300">
+                                                                        <TextBlock Text="{Binding Description}" TextWrapping="Wrap"/>
+                                                                    </ToolTip>
+                                                                </Border.ToolTip>
+                                                                <Border.Style>
+                                                                    <Style TargetType="Border">
+                                                                        <Setter Property="Visibility" Value="Visible"/>
+                                                                        <Style.Triggers>
+                                                                            <DataTrigger Binding="{Binding Description}" Value="">
+                                                                                <Setter Property="Visibility" Value="Collapsed"/>
+                                                                            </DataTrigger>
+                                                                            <DataTrigger Binding="{Binding Description}" Value="{x:Null}">
+                                                                                <Setter Property="Visibility" Value="Collapsed"/>
+                                                                            </DataTrigger>
+                                                                        </Style.Triggers>
+                                                                    </Style>
+                                                                </Border.Style>
+                                                                <TextBlock Text="!" FontSize="9" FontWeight="Bold"
+                                                                           Foreground="{DynamicResource TextSecondary2}"
+                                                                           HorizontalAlignment="Center" VerticalAlignment="Center" Margin="0,-1,0,0"/>
+                                                            </Border>
+
+                                                            <!-- CheckBox shown for toggleable components -->
+                                                            <CheckBox Grid.Column="2"
+                                                                      IsChecked="{Binding IsEnabled}"
+                                                                      HorizontalAlignment="Center"
+                                                                      VerticalAlignment="Center"
+                                                                      Visibility="{Binding IsToggleable, Converter={StaticResource BoolToVis}}"/>
+
+                                                            <!-- Lock icon shown for read-only components (e.g. TranslationProvider) -->
+                                                            <TextBlock Grid.Column="2"
+                                                                       Text="&#xE72E;"
+                                                                       FontFamily="Segoe MDL2 Assets"
+                                                                       FontSize="13"
+                                                                       Foreground="{DynamicResource SeparatorBrush}"
+                                                                       ToolTip="{Binding Source={x:Static services:TranslationManager.Instance}, Path=[Plugins_ReadOnlyTooltip]}"
+                                                                       HorizontalAlignment="Center"
+                                                                       VerticalAlignment="Center"
+                                                                       Visibility="{Binding IsToggleable, Converter={StaticResource InvertBoolToVis}}"/>
+                                                        </Grid>
                                                     </Border>
+                                                </DataTemplate>
+                                            </ItemsControl.ItemTemplate>
+                                        </ItemsControl>
+                                    </StackPanel>
 
-                                                    <!-- CheckBox shown for toggleable components -->
-                                                    <CheckBox Grid.Column="2"
-                                                              IsChecked="{Binding IsEnabled}"
-                                                              HorizontalAlignment="Center"
-                                                              VerticalAlignment="Center"
-                                                              Visibility="{Binding IsToggleable, Converter={StaticResource BoolToVis}}"/>
-
-                                                    <!-- Lock icon shown for read-only components (e.g. TranslationProvider) -->
-                                                    <TextBlock Grid.Column="2"
-                                                               Text="&#xE72E;"
-                                                               FontFamily="Segoe MDL2 Assets"
-                                                               FontSize="13"
-                                                               Foreground="{DynamicResource SeparatorBrush}"
-                                                               ToolTip="{Binding Source={x:Static services:TranslationManager.Instance}, Path=[Plugins_ReadOnlyTooltip]}"
-                                                               HorizontalAlignment="Center"
-                                                               VerticalAlignment="Center"
-                                                               Visibility="{Binding IsToggleable, Converter={StaticResource InvertBoolToVis}}"/>
-                                                </Grid>
-                                            </Border>
-                                        </DataTemplate>
-                                    </ItemsControl.ItemTemplate>
-                                </ItemsControl>
-                             </StackPanel>
-
-                        </DataTemplate>
-                    </ItemsControl.ItemTemplate>
-                </ItemsControl>
-             </StackPanel>
-
-        </StackPanel>
+                                </DataTemplate>
+                            </ItemsControl.ItemTemplate>
+                        </ItemsControl>
+                    </StackPanel>
+                </ScrollViewer>
+            </Grid>
+        </Grid>
     </Border>
 </UserControl>

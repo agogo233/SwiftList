@@ -1,35 +1,14 @@
 using SwiftList.Core.IndexV2;
+using SwiftList.Core.DriveMonitoring;
 
 using SwiftList.Core.Indexer.Usn.Journal;
 namespace SwiftList.Core.Indexer.Usn;
 
-public class UsnIndexer : IDisposable
+// Partial: the status types it publishes, and SnapshotStatus, live in UsnIndexerStatus.cs.
+public partial class UsnIndexer : IDisposable
 {
     public event Action<IndexerStatus>? StatusChanged;
     private long _lastProgressPublishTicks;
-
-    public class IndexerStatus
-    {
-        public string State { get; set; } = "idle";
-        public int Progress { get; set; } = 0;
-        public int TotalFiles { get; set; } = 0;
-        public int TotalDirs { get; set; } = 0;
-        public double ElapsedTime { get; set; } = 0.0;
-        public bool IsMaintenanceBusy { get; set; }
-        public List<string> ActiveDrives { get; set; } = new();
-        public List<DriveIndexStatus> Drives { get; set; } = new();
-    }
-
-    public class DriveIndexStatus
-    {
-        public string Drive { get; set; } = string.Empty;
-        public bool Enabled { get; set; }
-        public string Kind { get; set; } = "LocalNtfs";
-        public string State { get; set; } = "unknown";
-        public int Files { get; set; }
-        public int Dirs { get; set; }
-        public string CachePath { get; set; } = string.Empty;
-    }
 
     internal readonly object _lockObj = new();
     internal readonly JournalReader _reader = new();
@@ -37,40 +16,19 @@ public class UsnIndexer : IDisposable
     // Guarded by _lockObj for structural changes (add/remove a drive); each LiveIndex then guards its
     // own Snapshot/DeltaOverlay pair independently -- see SearchCoordinator's header comment.
     internal readonly Dictionary<string, LiveIndex> _recordIndexes = new(StringComparer.OrdinalIgnoreCase);
-    // One live monitor per drive -- see DriveMonitorFactory, the sole place that populates this.
-    private readonly Dictionary<string, IDisposable> _driveMonitors = new(StringComparer.OrdinalIgnoreCase);
+    // One live monitor per drive -- see DriveMonitorFactory, the sole place that populates this. Managed
+    // via UsnIndexerMonitorExtensions (Register/Remove/DisposeAll), internal rather than private so those
+    // extension methods can reach it.
+    internal readonly Dictionary<string, IDisposable> _driveMonitors = new(StringComparer.OrdinalIgnoreCase);
+    // Debounces UsnIndexerExtensions.ApplyFolderChange's own disk persist -- see its own comment on why.
+    internal readonly KeyedDebouncer<string> _folderChangeSaveDebounce = new(1000, StringComparer.OrdinalIgnoreCase);
+    // Drives whose FolderDriveMonitor detected a change while a rebuild was in progress for that same
+    // drive -- see UsnIndexerExtensions.ApplyFolderChange (sets it) and ConsumeMissedFolderChangeDuringRebuild
+    // (consumes it to queue one follow-up refresh once the rebuild finishes).
+    internal readonly HashSet<string> _missedFolderChangeDuringRebuild = new(StringComparer.OrdinalIgnoreCase);
 
     public IndexerStatus Status { get; } = new();
     public object LockObj => _lockObj;
-
-    // Stops and replaces whatever monitor was previously registered for this drive, if any -- called
-    // exactly once per monitor start, from DriveMonitorFactory.EnsureMonitor. Disposed outside the lock:
-    // FolderDriveMonitor.Dispose() tears down a real FileSystemWatcher, and a CancellationDisposable's
-    // Cancel() can run arbitrary continuations -- neither should happen while holding LockObj.
-    internal void RegisterDriveMonitor(string drive, IDisposable monitor)
-    {
-        IDisposable? old;
-        lock (LockObj)
-        {
-            _driveMonitors.TryGetValue(drive, out old);
-            _driveMonitors[drive] = monitor;
-        }
-        old?.Dispose();
-    }
-
-    // Stops every currently-registered monitor -- a full rebuild-from-scratch tearing down and restarting
-    // everything, or final app shutdown.
-    internal void DisposeAllDriveMonitors()
-    {
-        List<IDisposable> monitors;
-        lock (LockObj)
-        {
-            monitors = _driveMonitors.Values.ToList();
-            _driveMonitors.Clear();
-        }
-        foreach (var monitor in monitors)
-            monitor.Dispose();
-    }
 
     // JournalId/NextUsn here are the LIVE catch-up position, updated on every USN batch; a LiveIndex's
     // own Snapshot.JournalId/NextUsn only reflect the position as of its last compaction. The other
@@ -84,10 +42,17 @@ public class UsnIndexer : IDisposable
         public UInt128 RootId { get; init; }
         public ulong JournalId { get; set; }
         public long NextUsn { get; set; }
+        // False for a mid-walk checkpoint or a scan interrupted before finishing -- see
+        // UsnIndexerCacheExtensions.IsDriveIndexComplete, the local-drive counterpart of
+        // NetworkIndexer.Configure's own IsComplete-gated cold-start resume.
+        public bool IsComplete { get; init; }
     }
 
 
     public void SearchStreaming(string query, int limit, Action<SearchResult> onResult, CancellationToken token = default, string? directoryFilter = null) => SearchCoordinator.SearchStreaming(_recordIndexes, LockObj, query, limit, onResult, token, directoryFilter);
+
+    public bool EnumerateDirectory(string path, bool recursive, string[]? patterns, int limit, Action<SearchResult> onResult, CancellationToken token = default)
+        => SearchCoordinator.EnumerateDirectory(_recordIndexes, LockObj, path, recursive, patterns, limit, onResult, token);
 
     public void SetDriveStatuses(IEnumerable<DriveIndexStatus> drives)
     {
@@ -192,7 +157,8 @@ public class UsnIndexer : IDisposable
         VolumeSerialNumber = store.VolumeSerialNumber,
         RootId = store.RootId,
         JournalId = store.JournalId,
-        NextUsn = store.NextUsn
+        NextUsn = store.NextUsn,
+        IsComplete = store.IsComplete
     };
 
     private static UInt128 ToSourceLocalId(UInt128 value) => value;
@@ -233,38 +199,12 @@ public class UsnIndexer : IDisposable
 
     public void Dispose()
     {
-        DisposeAllDriveMonitors();
+        this.DisposeAllDriveMonitors();
+        _folderChangeSaveDebounce.Dispose();
         _driveMetadata.Clear();
         foreach (var live in _recordIndexes.Values)
             live.Dispose();
         _recordIndexes.Clear();
-    }
-
-    public IndexerStatus SnapshotStatus()
-    {
-        lock (LockObj)
-        {
-            return new IndexerStatus
-            {
-                State = Status.State,
-                Progress = Status.Progress,
-                TotalFiles = Status.TotalFiles,
-                TotalDirs = Status.TotalDirs,
-                ElapsedTime = Status.ElapsedTime,
-                IsMaintenanceBusy = Status.IsMaintenanceBusy,
-                ActiveDrives = Status.ActiveDrives.ToList(),
-                Drives = Status.Drives.Select(d => new DriveIndexStatus
-                {
-                    Drive = d.Drive,
-                    Enabled = d.Enabled,
-                    Kind = d.Kind,
-                    State = d.State,
-                    Files = d.Files,
-                    Dirs = d.Dirs,
-                    CachePath = d.CachePath
-                }).ToList()
-            };
-        }
     }
 
     internal void PublishStatusChanged()

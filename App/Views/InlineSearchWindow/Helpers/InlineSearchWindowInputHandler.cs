@@ -31,7 +31,7 @@ public class InlineSearchWindowInputHandler
 
         // Every bare key check below (including Escape) requires no modifiers -- otherwise it would
         // shadow a user-configurable combo hotkey sharing the same base key (e.g. CompleteFromSelectionHotkey
-        // defaults to Ctrl+Tab, StartupPanel's tab-cycle hotkeys default to Ctrl+Left/Right) before it
+        // defaults to Ctrl+Tab) before it
         // ever reaches that hotkey's own dispatch further down (or the calling window's).
         var noModifiers = Keyboard.Modifiers == ModifierKeys.None;
 
@@ -285,20 +285,12 @@ public class InlineSearchWindowInputHandler
         _userNavigatedSinceLastQuery = true;
         var count = _window.LstResults.Items.Count;
         if (count == 0) return;
-        var index = _window.LstResults.SelectedIndex;
-        var originalIndex = index;
+        var next = ListSelectionNavigator.NextSelectable(_window.LstResults.SelectedIndex, direction, count,
+            i => _window.LstResults.Items[i] is AppSearchResult item && !item.IsEmptyResult && !item.IsSearchSectionHeader);
+        if (next < 0) return;
 
-        do
-        {
-            index = (index + direction + count) % count;
-            if (index == originalIndex) break;
-            if (_window.LstResults.Items[index] is AppSearchResult item && !item.IsEmptyResult && !item.IsSearchSectionHeader)
-            {
-                _window.LstResults.SelectedIndex = index;
-                _window.LstResults.ScrollIntoView(_window.LstResults.SelectedItem);
-                break;
-            }
-        } while (true);
+        _window.LstResults.SelectedIndex = next;
+        _window.LstResults.ScrollIntoView(_window.LstResults.SelectedItem);
     }
 
     public static T? FindVisualParent<T>(DependencyObject? child) where T : DependencyObject => InlineSearchWindowLayoutManager.FindVisualParent<T>(child);

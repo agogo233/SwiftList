@@ -33,6 +33,38 @@ public sealed class HighlightMaskTests
         Assert.IsTrue(Array.TrueForAll(mask, m => m));
     }
 
+    // Regression coverage: Mark used to always highlight the OR set's FIRST term regardless of whether
+    // it actually matched this candidate, mirroring FzfPattern.TryMatchSingle's per-set "best matching
+    // term" semantics only in its own comment, not its code. A candidate that only matched via the
+    // second or third OR term came back with an all-false mask -- no highlight at all -- even though the
+    // real match algorithm matched it correctly via that later term.
+    [TestMethod]
+    public void Compute_OrQuery_HighlightsWhicheverTermActuallyMatchedTheCandidate()
+    {
+        var pattern = FzfPattern.Parse("123 | 456 | 789");
+
+        var maskForFirstTerm = HighlightMask.Compute("123", pattern);
+        var maskForSecondTerm = HighlightMask.Compute("456", pattern);
+        var maskForThirdTerm = HighlightMask.Compute("789", pattern);
+
+        Assert.IsTrue(Array.TrueForAll(maskForFirstTerm, m => m));
+        Assert.IsTrue(Array.TrueForAll(maskForSecondTerm, m => m));
+        Assert.IsTrue(Array.TrueForAll(maskForThirdTerm, m => m));
+    }
+
+    // When a candidate contains MORE THAN ONE of the OR set's terms (e.g. "我爱我家" contains both "我"
+    // and "爱" from "我 | 爱 | 你"), every matching term highlights -- the union of "我"'s two
+    // occurrences AND "爱"'s one occurrence, not just whichever term happens to be tried first.
+    [TestMethod]
+    public void Compute_OrQuery_CandidateContainsMultipleMatchingTerms_HighlightsTheUnionOfAllOfThem()
+    {
+        var pattern = FzfPattern.Parse("我 | 爱 | 你");
+
+        var mask = HighlightMask.Compute("我爱我家", pattern);
+
+        CollectionAssert.AreEqual(new[] { true, true, true, false }, mask);
+    }
+
     [TestMethod]
     public void Compute_NoMatch_ReturnsAllFalseMask()
     {

@@ -45,6 +45,27 @@ public partial class ResultsControl : System.Windows.Controls.UserControl
                 LstResults.SelectedItem = item.Content;
             }
         };
+        void HandleMiddleClickPreview(object sender, System.Windows.Input.MouseButtonEventArgs e)
+        {
+            if (e.ChangedButton == System.Windows.Input.MouseButton.Middle)
+            {
+                var parentWindow = Window.GetWindow(this);
+                if (parentWindow != null && parentWindow.GetType().Name != "InlineSearchWindow")
+                {
+                    var listBox = sender as System.Windows.Controls.ListBox;
+                    var item = FindVisualParent<ListBoxItem>(e.OriginalSource as DependencyObject);
+                    if (item?.Content is AppSearchResult result && result.CanPreview)
+                    {
+                        listBox?.SelectedItem = result;
+                        Services.QuickLookManager.Instance.Toggle(parentWindow, result.FullPath);
+                        e.Handled = true;
+                    }
+                }
+            }
+        }
+
+        LstResults.MouseDown += HandleMiddleClickPreview;
+        LstGridResults.MouseDown += HandleMiddleClickPreview;
 
         // Dynamically load custom GridView columns from ResultColumnProviders
         Loaded += (s, e) =>
@@ -167,30 +188,142 @@ public partial class ResultsControl : System.Windows.Controls.UserControl
         }
     }
 
-    private void OnCollectionChanged(object? sender, NotifyCollectionChangedEventArgs e) => Dispatcher.BeginInvoke(new Action(() =>
-                                                                                                 {
-                                                                                                     if (GridActions != null && GridActions.Visibility == Visibility.Visible)
-                                                                                                         return;
+    // ReconcileTo (ObservableRangeCollection) raises one CollectionChanged event PER CHANGED ROW, not
+    // one for the whole batch -- and SearchResultsReconciler.ItemsEqual compares SearchQuery, which is
+    // re-stamped with the just-typed text on every keystroke, so essentially every row differs every
+    // time (needed so an already-realized row's TextHighlighter binding picks up the new query and
+    // re-highlights). For the full window's 1000-item budget that's up to ~1000 individual events per
+    // keystroke; without this guard, each one independently scheduled its own Dispatcher.BeginInvoke
+    // below, so a single keystroke could queue up to ~1000 Render-priority callbacks (each redoing
+    // SelectedIndex/ScrollIntoView) for the UI thread to drain before it could respond to the next one --
+    // only the LAST of those ever did anything observable anyway, since the list had already fully
+    // settled to its final state by the time any of them actually ran. Collapsing the whole burst down to
+    // exactly one scheduled callback (it naturally runs after ReconcileTo's synchronous loop finishes,
+    // since BeginInvoke never runs mid-loop on the same thread) keeps the exact same observable result
+    // with none of the wasted intermediate work.
+    private bool _collectionChangedPending;
 
-                                                                                                     var list = ActiveListBox;
-                                                                                                     if (list != null && list.Items.Count > 0)
-                                                                                                     {
-                                                                                                         list.SelectedIndex = 0;
-                                                                                                         if (ViewMode == ResultsViewMode.Grid)
-                                                                                                             LstGridResults.ScrollIntoView(LstGridResults.SelectedItem);
-                                                                                                         else
-                                                                                                             LstResults.ScrollIntoView(LstResults.SelectedItem);
-                                                                                                     }
-                                                                                                     else
-                                                                                                     {
-                                                                                                         list?.SelectedIndex = -1;
-                                                                                                     }
+    // Where the user last put themselves in the CURRENT result set: the row they selected and how far
+    // down they scrolled. Both stay at 0 until they actually do something, so a set nobody has touched
+    // restores to exactly the top-of-list state this handler has always produced.
+    //
+    // Needed because a Reset (which is what a large update raises -- see ObservableRangeCollection's
+    // ResetInsteadOfReconcileThreshold) tells WPF that every item is gone, so Selector drops the
+    // selection outright and the panel is free to drop the scroll offset with it. Nothing survives for
+    // the handler below to notice, which is why the position has to be recorded as the user creates it
+    // rather than read back afterwards.
+    private int _anchorIndex;
+    private double _anchorOffset;
+    private ScrollViewer? _resultsScrollViewer;
+    private bool _suppressAnchorCapture;
 
-                                                                                                     // Reseed the hover baseline to the cursor's current spot so the MouseMove WPF
-                                                                                                     // synthesizes once these rows finish laying out under it doesn't get mistaken for
-                                                                                                     // real movement (see LstResults.MouseMove above).
-                                                                                                     _lastHoverPos = System.Windows.Input.Mouse.GetPosition(LstResults);
-                                                                                                 }), System.Windows.Threading.DispatcherPriority.Render);
+    private void OnResultsScrollChanged(object sender, ScrollChangedEventArgs e)
+    {
+        if (e.OriginalSource is not ScrollViewer scrollViewer)
+            return;
+        _resultsScrollViewer = scrollViewer;
+
+        // ExtentHeightChange separates a scroll the user performed from the offset moving because rows
+        // were added or removed underneath them. Only the former is a statement about where they want
+        // to be; recording the latter would let a repaint that resets the offset overwrite the very
+        // position this exists to restore.
+        if (!_suppressAnchorCapture && e.ExtentHeightChange == 0 && e.VerticalChange != 0)
+            _anchorOffset = scrollViewer.VerticalOffset;
+    }
+
+    private void CaptureSelectionAnchor(int index)
+    {
+        // A deselection is never recorded. Nothing the user does produces one here, but a Reset does:
+        // Selector drops the selection while handling it and raises SelectionChanged with -1, which
+        // arrives before the callback below runs -- so without this guard the teardown would erase the
+        // very anchor that teardown is the reason for keeping.
+        if (!_suppressAnchorCapture && index >= 0)
+            _anchorIndex = index;
+    }
+
+    private void OnCollectionChanged(object? sender, NotifyCollectionChangedEventArgs e)
+    {
+        // Read here rather than in the deferred callback below only for clarity -- the flag is set
+        // before the notification and outlives it -- but it does mean a burst is judged by its first
+        // event, which is what the rest of this handler already assumes.
+        var extendsContent = sender is Helpers.ObservableRangeCollection<AppSearchResult> { LastUpdateExtendedContent: true };
+
+        if (_collectionChangedPending) return;
+        _collectionChangedPending = true;
+
+        Dispatcher.BeginInvoke(new Action(() =>
+        {
+            _collectionChangedPending = false;
+
+            if (GridActions != null && GridActions.Visibility == Visibility.Visible)
+                return;
+
+            var list = ActiveListBox;
+            if (list == null)
+                return;
+
+            if (list.Items.Count == 0)
+            {
+                _anchorIndex = 0;
+                _anchorOffset = 0;
+                list.SelectedIndex = -1;
+                return;
+            }
+
+            if (extendsContent)
+            {
+                // The same result set got longer. Now that a tail append updates the rows it added and
+                // nothing else, the selection survives it -- and if it survived there is nothing here
+                // worth doing. Reassigning it anyway is not the harmless no-op it looks like: on a
+                // multi-select list it collapses the selection to one row, and it closes a context menu
+                // the user has open over that selection, which is how this surfaced -- a menu that
+                // dismissed itself every time more results arrived behind it.
+                if (list.SelectedIndex >= 0)
+                    return;
+
+                // Selection gone, so this update went through a Reset -- a late result that outranked
+                // what was already shown, reordering rather than appending. Put the user back where
+                // they were rather than at the top.
+                _suppressAnchorCapture = true;
+                try
+                {
+                    list.SelectedIndex = Math.Clamp(_anchorIndex, 0, list.Items.Count - 1);
+                    // Replaying the exact offset rather than ScrollIntoView, which would put the row
+                    // wherever it takes least scrolling to reveal -- not where the user left it.
+                    if (_anchorOffset > 0 && _resultsScrollViewer != null)
+                        _resultsScrollViewer.ScrollToVerticalOffset(_anchorOffset);
+                }
+                finally
+                {
+                    _suppressAnchorCapture = false;
+                }
+                return;
+            }
+
+            // A different result set: whatever position the user had was a position in a list that no
+            // longer exists, so it goes back to the top.
+            _anchorIndex = 0;
+            _anchorOffset = 0;
+            _suppressAnchorCapture = true;
+            try
+            {
+                list.SelectedIndex = 0;
+                if (ViewMode == ResultsViewMode.Grid)
+                    LstGridResults.ScrollIntoView(LstGridResults.SelectedItem);
+                else
+                    LstResults.ScrollIntoView(LstResults.SelectedItem);
+            }
+            finally
+            {
+                _suppressAnchorCapture = false;
+            }
+
+            // Reseed the hover baseline to the cursor's current spot so the MouseMove WPF synthesizes
+            // once these rows finish laying out under it doesn't get mistaken for real movement (see
+            // LstResults.MouseMove above).
+            _lastHoverPos = System.Windows.Input.Mouse.GetPosition(LstResults);
+        }), System.Windows.Threading.DispatcherPriority.Render);
+    }
 
     // SelectedItem DependencyProperty
     public static readonly DependencyProperty SelectedItemProperty = DependencyProperty.Register(
@@ -238,6 +371,7 @@ public partial class ResultsControl : System.Windows.Controls.UserControl
     {
         LstResults.SelectionChanged += (s, e) =>
         {
+            CaptureSelectionAnchor(LstResults.SelectedIndex);
             if (_isUpdatingSelection) return;
             _isUpdatingSelection = true;
             try
@@ -252,6 +386,7 @@ public partial class ResultsControl : System.Windows.Controls.UserControl
 
         LstGridResults.SelectionChanged += (s, e) =>
         {
+            CaptureSelectionAnchor(LstGridResults.SelectedIndex);
             if (_isUpdatingSelection) return;
             _isUpdatingSelection = true;
             try
@@ -263,6 +398,12 @@ public partial class ResultsControl : System.Windows.Controls.UserControl
                 _isUpdatingSelection = false;
             }
         };
+
+        // Attached at the ListBox/ListView because the ScrollViewer that raises this lives inside the
+        // control template and isn't reachable until it has been applied -- the event bubbles out to
+        // here regardless, and carries the ScrollViewer as its OriginalSource.
+        LstResults.AddHandler(ScrollViewer.ScrollChangedEvent, new ScrollChangedEventHandler(OnResultsScrollChanged));
+        LstGridResults.AddHandler(ScrollViewer.ScrollChangedEvent, new ScrollChangedEventHandler(OnResultsScrollChanged));
     }
 
     private bool _columnsLoaded;

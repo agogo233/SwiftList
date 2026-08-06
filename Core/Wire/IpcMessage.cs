@@ -16,6 +16,10 @@ public enum IpcMessageId : byte
     ExecuteInlineItem = 15,
     InlineSelectionChanged = 16,
     InlineSearchFinished = 17,
+    // Distinct from SetInlineSearchVisible, which means "forward keystrokes to me" and is cleared the
+    // moment the inline window takes focus for itself. This one means the window is simply on screen,
+    // which stays true either way, and is what a suppression that has to outlive that handover needs.
+    SetInlineWindowOnScreen = 18,
 
     // Hook -> App
     Activate = 20,
@@ -36,6 +40,10 @@ public enum IpcMessageId : byte
     Error = 35,
     MouseDoubleClick = 38,
     MouseMiddleClick = 39,
+    // Hook -> App: the quick panel's global hotkey fired. Carries nothing; the panel reads the
+    // foreground window itself, which has to be the one in front at that moment rather than whatever
+    // the hook happened to see.
+    QuickPanelHotkey = 36,
     ExecuteInlineItemResponse = 40
 }
 

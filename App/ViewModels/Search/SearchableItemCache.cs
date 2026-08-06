@@ -23,11 +23,40 @@ internal static class SearchableItemCache
     // ItemsChanged, which most never fire for a language change (it's meant for the provider's own
     // underlying data changing, e.g. Start Menu file-system events) -- so without this, every cached
     // provider's item text stays frozen in whatever language was active the first time it loaded.
-    static SearchableItemCache() => TranslationManager.Instance.PropertyChanged += (_, _) =>
-                                         {
-                                             _cache.Clear();
-                                             _loadingTasks.Clear();
-                                         };
+    //
+    // The same applies to the alias list each entry carries, which EnsureLoaded builds from the
+    // ENABLED alias providers at that moment. Turning one off afterwards left those aliases baked in,
+    // so a settings item kept being found by a disabled provider's spelling while the highlight -- which
+    // is recomputed live and does honour the setting -- came back empty: found but not lit up.
+    static SearchableItemCache() => TranslationManager.Instance.PropertyChanged += (_, _) => Clear();
+
+    private static int _watchingComponentChanges;
+
+    // Subscribed on first real use rather than from the static constructor. Reading
+    // PluginManager.Instance during type initialization would touch a Lazy singleton whose own
+    // constructor loads every plugin -- and if that path is ever made to touch this cache, type
+    // initialization would re-enter the Lazy that is still initializing. It does not today, but the
+    // constructor already carries a comment about having been caught by exactly that once. By the time
+    // anything asks this cache for entries, the singleton is long since built.
+    private static void WatchComponentChanges()
+    {
+        if (Interlocked.Exchange(ref _watchingComponentChanges, 1) == 0)
+            PluginManager.Instance.ComponentsRefreshed += Clear;
+    }
+
+    // Providers whose entries are known to be out of date but are still worth showing until the fresh
+    // ones arrive -- see Invalidate.
+    private static readonly ConcurrentDictionary<string, bool> _stale = new();
+
+    private static void Clear()
+    {
+        // Dropped outright, unlike Invalidate below: a language switch or a component being turned off
+        // makes the cached entries WRONG, not merely old, and showing the previous language for another
+        // second is not a kindness.
+        _cache.Clear();
+        _loadingTasks.Clear();
+        _stale.Clear();
+    }
 
     // Providers load on a background thread and a query issued before a given provider finishes is
     // silently missing its items -- there is no synchronous "wait for everything" alternative without
@@ -44,23 +73,51 @@ internal static class SearchableItemCache
 
     public static bool TryGetEntries(string providerId, out List<CacheEntry> entries) => _cache.TryGetValue(providerId, out entries!);
 
+    // Test seams. Loading for real needs a live PluginManager and a provider that reads the machine's
+    // own Start Menu, neither of which a test has -- but what has to hold is about the cache's own
+    // bookkeeping around a reload, which these make reachable without either.
+    internal static void Seed(string providerId, List<CacheEntry> entries) => _cache[providerId] = entries;
+
+    internal static bool IsStale(string providerId) => _stale.ContainsKey(providerId);
+
+    /// <summary>Marks a provider's entries as out of date, without taking them away.</summary>
+    /// <remarks>
+    /// The entries stay and keep being served while the reload runs. Removing them meant every search in
+    /// the meantime silently lost that provider -- for the Start Menu, every application vanished from
+    /// the results for as long as a full re-scan took (each shortcut resolved through COM, each icon
+    /// re-extracted), then reappeared. That is a rebuild the user should never have been able to see.
+    ///
+    /// It matters more than it looks, because a rebuild is not always warranted: a change the index
+    /// cannot pin to a directory is reported against the whole drive (see
+    /// PluginDirectoryChangeNotifier), so a busy C: still produces the occasional refresh for something
+    /// that never touched this provider's folders. Serving the old list makes that miss cost nothing
+    /// visible rather than emptying the results on a false alarm.
+    /// </remarks>
     public static void Invalidate(string providerId)
     {
-        _cache.TryRemove(providerId, out _);
+        if (!_cache.ContainsKey(providerId))
+            return;
+
+        _stale[providerId] = true;
+        // The finished load is what would otherwise stop EnsureLoaded from starting a fresh one.
         _loadingTasks.TryRemove(providerId, out _);
     }
 
     public static void EnsureLoaded(ISearchableItemProvider provider)
     {
+        WatchComponentChanges();
         var id = provider.GetType().Name;
         if (_subscribed.TryAdd(id, true))
         {
             provider.ItemsChanged += () => Invalidate(id);
         }
 
-        if (_cache.ContainsKey(id)) return;
+        // Stale entries are served, but they still have to be replaced -- so a cached-and-stale provider
+        // falls through to the load below rather than returning here.
+        if (_cache.ContainsKey(id) && !_stale.ContainsKey(id)) return;
 
-        _loadingTasks.GetOrAdd(id, _ => Task.Run(() =>
+        // Named, not a discard: `_` inside this lambda would shadow the discard the body wants to use.
+        _loadingTasks.GetOrAdd(id, key => Task.Run(() =>
         {
             try
             {
@@ -78,11 +135,16 @@ internal static class SearchableItemCache
                     entries.Add(new CacheEntry(item, aliases, MaterializeIcon(item)));
                 }
                 _cache[id] = entries;
+                _stale.TryRemove(id, out _);
             }
             catch (Exception ex)
             {
                 Core.Logger.Log($"[SearchableItemCache] Error loading from provider '{provider.Name}': {ex.Message}", Core.LogLevel.Error);
-                _cache[id] = new List<CacheEntry>();
+                // Only when there is nothing to fall back on. A reload that failed is no reason to throw
+                // away the entries that were working a moment ago -- the empty list would be served for
+                // the rest of the session, since nothing retries until the next change.
+                _cache.TryAdd(id, new List<CacheEntry>());
+                _stale.TryRemove(id, out _);
             }
             finally
             {

@@ -101,8 +101,40 @@ public static class UsnIndexerCacheExtensions
         }
     }
 
+    // Whether the drive's currently-loaded runtime metadata came from a genuinely finished scan, as
+    // opposed to a mid-walk checkpoint or a scan interrupted before finishing -- the local-drive
+    // counterpart of NetworkIndexer.Configure's own IsComplete check, which is what lets network drives
+    // automatically resume an interrupted scan on the next cold start instead of silently treating a
+    // partial cache as the final answer. False (not just "unknown") for a drive with no loaded metadata
+    // at all, so a caller can use this directly without a separate "is it even loaded" check first.
+    public static bool IsDriveIndexComplete(this UsnIndexer indexer, string drive)
+    {
+        lock (indexer.LockObj)
+        {
+            if (!indexer._driveMetadata.TryGetValue(drive, out var metadata))
+                return false;
+
+            // True NTFS ($MFT, via MftIndexScanner) has no partial/checkpoint output at all -- it's always
+            // either a fully-finished result or nothing (no result ever gets cached), so its cache is
+            // trivially always complete regardless of what IsComplete says. Checking the metadata's own
+            // FileSystemType (not a fresh VolumeHelper.GetFileSystemType(drive) call) also means an
+            // EXISTING NTFS cache written before this field existed -- IsComplete defaults to false on
+            // anything that never explicitly set it -- doesn't trigger a needless full $MFT re-scan the
+            // first time this check ships; only ReFS/non-journal drives, which can genuinely be
+            // incomplete, pay that one-time cost.
+            if (metadata.FileSystemType.Equals("NTFS", StringComparison.OrdinalIgnoreCase))
+                return true;
+
+            return metadata.IsComplete;
+        }
+    }
+
     public static void DropDriveFromRuntime(this UsnIndexer indexer, string drive)
     {
+        // Cancels (not fires) any pending debounced ApplyFolderChange save for this drive -- letting it
+        // fire after Dispose() below would call Compact() on an already-disposed LiveIndex.
+        indexer._folderChangeSaveDebounce.Cancel(drive);
+
         lock (indexer.LockObj)
         {
             indexer._driveMetadata.Remove(drive);
@@ -145,6 +177,7 @@ public static class UsnIndexerCacheExtensions
             RootId = snapshot.RootId,
             JournalId = snapshot.JournalId,
             NextUsn = snapshot.NextUsn,
+            IsComplete = snapshot.IsComplete,
         };
         if (!IsCurrentVolumeCache(drive, metadata))
         {

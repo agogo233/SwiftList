@@ -5,6 +5,7 @@
              xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
              xmlns:services="clr-namespace:SwiftList.App.Services"
              xmlns:indexSettings="clr-namespace:SwiftList.App.Views.Settings.IndexSettings"
+             xmlns:ctrl="clr-namespace:SwiftList.App.Views.Controls"
              mc:Ignorable="d"
              d:DesignHeight="550" d:DesignWidth="700">
     <UserControl.Resources>
@@ -18,15 +19,21 @@
         </ResourceDictionary>
     </UserControl.Resources>
 
-    <ScrollViewer VerticalScrollBarVisibility="Auto">
-        <StackPanel Grid.IsSharedSizeScope="True">
+    <Grid>
+        <Grid.RowDefinitions>
+            <RowDefinition Height="Auto"/>
+            <RowDefinition Height="*"/>
+        </Grid.RowDefinitions>
+
+        <StackPanel Grid.Row="0">
             <TextBlock Style="{StaticResource SettingsSectionTitle}"
-                       Text="{Binding Source={x:Static services:TranslationManager.Instance}, Path=[Settings_Index]}"/>
+                        Text="{Binding Source={x:Static services:TranslationManager.Instance}, Path=[Settings_Index]}"/>
             <TextBlock Style="{StaticResource SettingsHintText}"
-                       Text="{Binding Source={x:Static services:TranslationManager.Instance}, Path=[Index_Hint]}"/>
+                        Text="{Binding Source={x:Static services:TranslationManager.Instance}, Path=[Index_Hint]}"/>
 
             <!-- Tab header row -->
-            <StackPanel Orientation="Horizontal" Margin="0,16,0,0">
+            <ctrl:TabStripScrollView Margin="0,16,0,0">
+            <StackPanel Orientation="Horizontal">
                 <StackPanel Margin="0,0,28,0">
                     <Button Content="{Binding Source={x:Static services:TranslationManager.Instance}, Path=[Settings_LocalDrive]}"
                             Command="{Binding LocalDrive.SelectTabCommand}" CommandParameter="Local">
@@ -159,65 +166,83 @@
                     </Border>
                 </StackPanel>
             </StackPanel>
+            </ctrl:TabStripScrollView>
             <Border Height="1" Background="{DynamicResource SettingsRowBorderBrush}" Margin="0,0,0,15"/>
+        </StackPanel>
 
-            <!-- Tab: Local -->
-            <indexSettings:LocalTab x:Name="TabLocal">
-                <indexSettings:LocalTab.Style>
-                    <Style TargetType="UserControl">
-                        <Setter Property="Visibility" Value="Collapsed"/>
+        <Grid Grid.Row="1">
+            <ScrollViewer VerticalScrollBarVisibility="Auto">
+                <ScrollViewer.Style>
+                    <Style TargetType="ScrollViewer">
+                        <Setter Property="Visibility" Value="Visible"/>
                         <Style.Triggers>
-                            <DataTrigger Binding="{Binding LocalDrive.SelectedTab}" Value="Local">
-                                <Setter Property="Visibility" Value="Visible"/>
+                            <DataTrigger Binding="{Binding LocalDrive.SelectedTab}" Value="Exclusions">
+                                <Setter Property="Visibility" Value="Collapsed"/>
                             </DataTrigger>
                         </Style.Triggers>
                     </Style>
-                </indexSettings:LocalTab.Style>
-            </indexSettings:LocalTab>
+                </ScrollViewer.Style>
 
-            <!-- Tab: Network -->
-            <indexSettings:NetworkTab x:Name="TabNetwork">
-                <indexSettings:NetworkTab.Style>
-                    <Style TargetType="UserControl">
-                        <Setter Property="Visibility" Value="Collapsed"/>
-                        <Style.Triggers>
-                            <DataTrigger Binding="{Binding LocalDrive.SelectedTab}" Value="Network">
-                                <Setter Property="Visibility" Value="Visible"/>
-                            </DataTrigger>
-                        </Style.Triggers>
-                    </Style>
-                </indexSettings:NetworkTab.Style>
-            </indexSettings:NetworkTab>
+                <StackPanel Grid.IsSharedSizeScope="True">
+                    <!-- Tab: Local -->
+                    <indexSettings:LocalTab x:Name="TabLocal">
+                        <indexSettings:LocalTab.Style>
+                            <Style TargetType="UserControl">
+                                <Setter Property="Visibility" Value="Collapsed"/>
+                                <Style.Triggers>
+                                    <DataTrigger Binding="{Binding LocalDrive.SelectedTab}" Value="Local">
+                                        <Setter Property="Visibility" Value="Visible"/>
+                                    </DataTrigger>
+                                </Style.Triggers>
+                            </Style>
+                        </indexSettings:LocalTab.Style>
+                    </indexSettings:LocalTab>
 
-            <!-- Tab: WSL -->
-            <indexSettings:WslTab x:Name="TabWsl">
-                <indexSettings:WslTab.Style>
-                    <Style TargetType="UserControl">
-                        <Setter Property="Visibility" Value="Collapsed"/>
-                        <Style.Triggers>
-                            <DataTrigger Binding="{Binding LocalDrive.SelectedTab}" Value="Wsl">
-                                <Setter Property="Visibility" Value="Visible"/>
-                            </DataTrigger>
-                        </Style.Triggers>
-                    </Style>
-                </indexSettings:WslTab.Style>
-            </indexSettings:WslTab>
+                    <!-- Tab: Network -->
+                    <indexSettings:NetworkTab x:Name="TabNetwork">
+                        <indexSettings:NetworkTab.Style>
+                            <Style TargetType="UserControl">
+                                <Setter Property="Visibility" Value="Collapsed"/>
+                                <Style.Triggers>
+                                    <DataTrigger Binding="{Binding LocalDrive.SelectedTab}" Value="Network">
+                                        <Setter Property="Visibility" Value="Visible"/>
+                                    </DataTrigger>
+                                </Style.Triggers>
+                            </Style>
+                        </indexSettings:NetworkTab.Style>
+                    </indexSettings:NetworkTab>
 
-            <!-- Tab: Folders -->
-            <indexSettings:FoldersTab x:Name="TabFolders">
-                <indexSettings:FoldersTab.Style>
-                    <Style TargetType="UserControl">
-                        <Setter Property="Visibility" Value="Collapsed"/>
-                        <Style.Triggers>
-                            <DataTrigger Binding="{Binding LocalDrive.SelectedTab}" Value="Folders">
-                                <Setter Property="Visibility" Value="Visible"/>
-                            </DataTrigger>
-                        </Style.Triggers>
-                    </Style>
-                </indexSettings:FoldersTab.Style>
-            </indexSettings:FoldersTab>
+                    <!-- Tab: WSL -->
+                    <indexSettings:WslTab x:Name="TabWsl">
+                        <indexSettings:WslTab.Style>
+                            <Style TargetType="UserControl">
+                                <Setter Property="Visibility" Value="Collapsed"/>
+                                <Style.Triggers>
+                                    <DataTrigger Binding="{Binding LocalDrive.SelectedTab}" Value="Wsl">
+                                        <Setter Property="Visibility" Value="Visible"/>
+                                    </DataTrigger>
+                                </Style.Triggers>
+                            </Style>
+                        </indexSettings:WslTab.Style>
+                    </indexSettings:WslTab>
 
-            <!-- Tab: Exclusions -->
+                    <!-- Tab: Folders -->
+                    <indexSettings:FoldersTab x:Name="TabFolders">
+                        <indexSettings:FoldersTab.Style>
+                            <Style TargetType="UserControl">
+                                <Setter Property="Visibility" Value="Collapsed"/>
+                                <Style.Triggers>
+                                    <DataTrigger Binding="{Binding LocalDrive.SelectedTab}" Value="Folders">
+                                        <Setter Property="Visibility" Value="Visible"/>
+                                    </DataTrigger>
+                                </Style.Triggers>
+                            </Style>
+                        </indexSettings:FoldersTab.Style>
+                    </indexSettings:FoldersTab>
+                </StackPanel>
+            </ScrollViewer>
+
+            <!-- Tab: Exclusions (manages its own fixed sub-tab header and internal scrollviewer) -->
             <indexSettings:ExclusionsTab x:Name="TabExclusions">
                 <indexSettings:ExclusionsTab.Style>
                     <Style TargetType="UserControl">
@@ -230,6 +255,6 @@
                     </Style>
                 </indexSettings:ExclusionsTab.Style>
             </indexSettings:ExclusionsTab>
-        </StackPanel>
-    </ScrollViewer>
+        </Grid>
+    </Grid>
 </UserControl>

@@ -27,11 +27,18 @@ internal static class IndexCacheManager
             store.VolumeSerialNumber = identity.Value.SerialNumber;
         }
 
+        // Real root mtime plus Listed: by the time any caller of this method has a completed store to
+        // return, the root's own children were necessarily gathered one way or another (freshly
+        // enumerated or reused from a previous pass) -- see TreeDiffBaseline.TryGetUnchangedChildren,
+        // which ReFsScanner now consults using both of these.
+        var rootLastWriteTime = FileTimeHelper.TryGetLastWriteTimeUnixSeconds($"{drive}:\\");
+
         store.Records.Add(new FileRecord(
             store.RootId,
             store.RootId,
             string.Empty,
-            FileRecordFlags.Directory | FileRecordFlags.SourceRoot));
+            FileRecordFlags.Directory | FileRecordFlags.SourceRoot | FileRecordFlags.Listed,
+            lastWriteTimeUnixSeconds: rootLastWriteTime));
         return store;
     }
 
@@ -47,7 +54,8 @@ internal static class IndexCacheManager
 
         foreach (var kvp in searchItems)
         {
-            var flags = kvp.Value.IsDir ? FileRecordFlags.Directory : FileRecordFlags.None;
+            var flags = (kvp.Value.IsDir ? FileRecordFlags.Directory : FileRecordFlags.None)
+                | (kvp.Value.Listed ? FileRecordFlags.Listed : FileRecordFlags.None);
             store.Records.Add(new FileRecord(
                 kvp.Key,
                 kvp.Value.ParentFrn,

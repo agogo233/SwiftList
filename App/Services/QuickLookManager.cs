@@ -1,7 +1,5 @@
 using System.Runtime.InteropServices;
 using System.Windows;
-using System.Windows.Media.Animation;
-using SwiftList.PluginSdk.Abstractions.Plugins;
 using SwiftList.PluginSdk.Services;
 
 using SwiftList.App.Services.AppWindow;
@@ -9,7 +7,7 @@ using SwiftList.App.Services.Plugin;
 using SwiftList.PluginSdk.Abstractions.Plugins.Preview;
 namespace SwiftList.App.Services;
 
-public class QuickLookManager
+public partial class QuickLookManager
 {
     [DllImport("user32.dll")] private static extern IntPtr GetForegroundWindow();
     [DllImport("user32.dll")] private static extern uint GetWindowThreadProcessId(IntPtr hWnd, out uint lpdwProcessId);
@@ -20,6 +18,26 @@ public class QuickLookManager
     private Views.QuickLook.QuickLookWindow? _window;
     private Window? _owner;
     private bool _userWantsPreview;
+    private double? _sessionWidth;
+    private double? _sessionHeight;
+    private double? _sessionLeft;
+    private double? _sessionTop;
+
+    public void SetUserResizedDimensions(double width, double height)
+    {
+        _sessionWidth = width;
+        _sessionHeight = height;
+    }
+
+    public void SetUserMovedPosition(double left, double top)
+    {
+        _sessionLeft = left;
+        _sessionTop = top;
+    }
+    // Tracked separately (not just "is _owner non-null") since external-preview mode attaches
+    // LocationChanged/SizeChanged but deliberately NOT Deactivated -- see ShowOrUpdate's own comment.
+    private bool _ownerTrackingAttached;
+    private bool _ownerDeactivateAttached;
     // Set while both windows are hidden for a preview handler's own popup dialog (see
     // PreviewDialogSignal) -- distinguishes that from every other reason _window/_owner might be
     // hidden, so DialogClosed only ever re-shows what this specific mechanism hid.
@@ -78,7 +96,11 @@ public class QuickLookManager
             _owner.Dispatcher.BeginInvoke(new Action(() => searchWindow.FocusSearch()));
     }
 
-    public bool IsVisible => _window != null && _window.IsVisible;
+    // IsShowingExternalPreview counts too: that path deliberately Hide()s _window itself (so it never
+    // shows an empty panel next to whatever the provider popped up externally) -- without this, Toggle()
+    // would read "nothing is showing" while QuickLook is actively docked and take the wrong branch (show
+    // again instead of hide) on the next Alt+P.
+    public bool IsVisible => _window != null && (_window.IsVisible || _window.IsShowingExternalPreview);
 
     // Checked by QuickSearchWindow.Window_Deactivated so its own delayed auto-hide-on-deactivate logic
     // doesn't fight this: without it, that handler would see the window we just Hide()'d as "deactivated"
@@ -89,7 +111,50 @@ public class QuickLookManager
     public void Reset()
     {
         _userWantsPreview = false;
+        _sessionWidth = null;
+        _sessionHeight = null;
+        _sessionLeft = null;
+        _sessionTop = null;
         Hide();
+    }
+
+    /// <summary>
+    /// Whether the user currently wants the preview following the selection. Read when one search window
+    /// hands over to another so the replacement can reopen it.
+    /// </summary>
+    public bool IsPreviewWanted => _userWantsPreview;
+
+    /// <summary>Whether the preview window is the one that currently has the foreground.</summary>
+    /// <remarks>
+    /// For an owner that dismisses itself on losing focus: clicking into the preview is the user reaching
+    /// for something the owner put there, not clicking away from it, and an owner that took the second
+    /// reading would close both windows out from under that click. The search windows do not need this --
+    /// they hide on deactivate only when the foreground left the process entirely, which the preview
+    /// never does -- but the quick panel's dismissal is stricter than that.
+    ///
+    /// Both readings, because they answer at different moments. IsActive is WPF's own and is set as the
+    /// activation is processed; the foreground handle is the OS's and is what a native preview handler's
+    /// child window reports through. Asking either alone left a window in which neither had said yes yet.
+    ///
+    /// Worth stressing: this is only ever true AFTER the click has been processed. Called from inside a
+    /// Deactivated handler it answers no, whatever the user actually clicked -- Windows makes the new
+    /// window the foreground one after the old one is told it lost it.
+    /// </remarks>
+    public bool IsPreviewForeground()
+    {
+        if (_window == null) return false;
+        if (_window.IsActive) return true;
+
+        var handle = new System.Windows.Interop.WindowInteropHelper(_window).Handle;
+        return handle != IntPtr.Zero && GetForegroundWindow() == handle;
+    }
+
+    /// <summary>Opens the preview and records that the user wants it.</summary>
+    public void Open(Window owner, string path)
+    {
+        if (string.IsNullOrEmpty(path)) return;
+        _userWantsPreview = true;
+        ShowOrUpdate(owner, path);
     }
 
     public void Toggle(Window owner, string path)
@@ -108,8 +173,28 @@ public class QuickLookManager
         }
     }
 
+    // Only the window that owns the preview may move or close it. A window handing over keeps running its
+    // own teardown for a moment: the quick window's hide clears its search query, which re-fires its own
+    // selection handler. Whether that lands before or after the full window has opened the preview it
+    // inherited is a race -- the search debounce is 150ms for an ordinary query but ZERO for a
+    // single-character one, either side of the fade-out this is racing.
+    private bool IsSupersededCaller(Window caller) =>
+        _owner != null && !ReferenceEquals(_owner, caller) && _owner.IsVisible;
+
+    /// <summary>
+    /// Hides the preview on behalf of one window, for a selection with nothing to preview. Ignored once
+    /// another window has taken the preview over.
+    /// </summary>
+    public void HideFrom(Window caller)
+    {
+        if (IsSupersededCaller(caller)) return;
+        Hide();
+    }
+
     public void UpdateOrShow(Window owner, string path)
     {
+        if (IsSupersededCaller(owner)) return;
+
         if (string.IsNullOrEmpty(path))
         {
             Hide();
@@ -127,6 +212,10 @@ public class QuickLookManager
         if (_window != null)
         {
             _window.Hide();
+            // Not redundant with the line above: when the current provider is RendersExternally, _window
+            // was already hidden the moment that provider started showing, so this Hide() call is a no-op
+            // transition-wise and IsVisibleChanged (which normally does this) never fires again.
+            _window.ReleaseCurrentPreview();
             DetachOwner();
         }
     }
@@ -143,10 +232,39 @@ public class QuickLookManager
         if (_window == null)
         {
             _window = new Views.QuickLook.QuickLookWindow();
-            _window.Closed += (s, e) => _window = null;
+            // Detaches the owner as well as dropping the reference: an owner window that closes takes
+            // this one with it (it is an owned window), and leaving the owner attached would keep the
+            // tracking flags set, so the next owner would silently get no tracking at all.
+            _window.Closed += (s, e) => { _window = null; DetachOwner(); };
+            _window.Deactivated += OnPreviewDeactivated;
         }
 
         _window.SetTarget(path);
+
+        // The winning provider's real preview surface is a separate window it manages itself (e.g. an
+        // external application) -- CreatePreview's returned content is never actually shown, so our own
+        // panel would just be a redundant empty box floating next to whatever that provider popped up.
+        // Checked here, right after SetTarget resolves the winning provider, specifically to avoid the
+        // isFirstShow/_window.Show() logic below re-showing it: SetTarget runs first and can itself leave
+        // _window.IsVisible false, which isFirstShow would otherwise read as "starting fresh" and undo.
+        if (_window.IsShowingExternalPreview)
+        {
+            if (_window.IsVisible) _window.Hide();
+
+            // Still track the owner moving/resizing (so the docked window follows it around), but NOT
+            // Deactivated: that handler's Hide() would close the very window the user just clicked into --
+            // clicking QuickLook's own docked window (a separate top-level window) deactivates the owner
+            // for real, same reasoning as Owner_Deactivated's existing HwndHost comment, but there's no
+            // equivalent "still focus in a way we care about" check possible for a foreign process.
+            DetachOwnerDeactivateTracking();
+            AttachOwnerLocationTracking(owner);
+
+            NotifyExternalBounds(owner);
+            return;
+        }
+
+        AttachOwnerLocationTracking(owner);
+        AttachOwnerDeactivateTracking(owner);
 
         // Only slide in on the transition to visible -- a preview session starting fresh -- not on every
         // reposition while it's already open (the owner moving/resizing would otherwise re-trigger the
@@ -156,29 +274,60 @@ public class QuickLookManager
         {
             _window.Owner = owner;
             _window.Show();
-
-            // Attach window position tracking
-            owner.LocationChanged += Owner_LocationChanged;
-            owner.SizeChanged += Owner_SizeChanged;
-            owner.Deactivated += Owner_Deactivated;
         }
 
         PositionWindow(animate: isFirstShow);
+    }
+
+    private void AttachOwnerLocationTracking(Window owner)
+    {
+        if (_ownerTrackingAttached) return;
+        owner.LocationChanged += Owner_LocationChanged;
+        owner.SizeChanged += Owner_SizeChanged;
+        _ownerTrackingAttached = true;
+    }
+
+    private void AttachOwnerDeactivateTracking(Window owner)
+    {
+        if (_ownerDeactivateAttached) return;
+        owner.Deactivated += Owner_Deactivated;
+        _ownerDeactivateAttached = true;
+    }
+
+    private void DetachOwnerDeactivateTracking()
+    {
+        if (!_ownerDeactivateAttached || _owner == null) return;
+        _owner.Deactivated -= Owner_Deactivated;
+        _ownerDeactivateAttached = false;
     }
 
     private void DetachOwner()
     {
         if (_owner != null)
         {
-            _owner.LocationChanged -= Owner_LocationChanged;
-            _owner.SizeChanged -= Owner_SizeChanged;
-            _owner.Deactivated -= Owner_Deactivated;
+            if (_ownerTrackingAttached)
+            {
+                _owner.LocationChanged -= Owner_LocationChanged;
+                _owner.SizeChanged -= Owner_SizeChanged;
+                _ownerTrackingAttached = false;
+            }
+            DetachOwnerDeactivateTracking();
             _owner = null;
         }
     }
 
-    private void Owner_LocationChanged(object? sender, EventArgs e) => PositionWindow();
-    private void Owner_SizeChanged(object? sender, SizeChangedEventArgs e) => PositionWindow();
+    // Branches on the current mode: external-dock re-asserts QuickLook's window position, the normal
+    // path repositions our own _window -- both are hooked to the same owner LocationChanged/SizeChanged
+    // events (see AttachOwnerLocationTracking), just handled differently depending on which is active.
+    private void RepositionForCurrentMode()
+    {
+        if (_window == null || _owner == null) return;
+        if (_window.IsShowingExternalPreview) NotifyExternalBounds(_owner);
+        else PositionWindow();
+    }
+
+    private void Owner_LocationChanged(object? sender, EventArgs e) => RepositionForCurrentMode();
+    private void Owner_SizeChanged(object? sender, SizeChangedEventArgs e) => RepositionForCurrentMode();
 
     private void Owner_Deactivated(object? sender, EventArgs e)
     {
@@ -188,7 +337,40 @@ public class QuickLookManager
         // clicked into. Only hide when something outside this process took the foreground.
         if (IsForegroundWindowInThisProcess())
             return;
+
+        // Dragging the preview's header out to another application makes that application the foreground
+        // window, which lands here. Hiding now would pull this window out from under the DoDragDrop still
+        // running on its own header -- the same hazard the inline window's own teardown guards against
+        // with this flag. The drag's own completion hides the search windows anyway (see
+        // ResultsDragDropHelper.HideSearchWindows).
+        if (Views.Controls.Results.ResultsDragDropHelper.IsDragActive)
+            return;
+
         Hide();
+    }
+
+    /// <summary>Raised when the preview itself loses the foreground to another application.</summary>
+    /// <remarks>
+    /// For an owner that dismisses itself on losing focus and had to stand down while the preview held it
+    /// (see <see cref="IsPreviewForeground"/>): its own Deactivated already fired on the click that
+    /// reached the preview and will not fire again, so without this the click that leaves for good
+    /// reaches nobody and the owner stays on screen.
+    ///
+    /// Only an announcement: nothing is hidden here, because the windows that do not dismiss themselves
+    /// on focus loss are not meant to start.
+    /// </remarks>
+    public event Action? PreviewFocusLost;
+
+    private void OnPreviewDeactivated(object? sender, EventArgs e)
+    {
+        // Clicking back into the owner, or onto any other window of this app's, is not leaving.
+        if (IsForegroundWindowInThisProcess()) return;
+
+        // A drag out of the preview's own header makes the drop target's application the foreground, the
+        // same hazard Owner_Deactivated guards against for the same reason.
+        if (Views.Controls.Results.ResultsDragDropHelper.IsDragActive) return;
+
+        PreviewFocusLost?.Invoke();
     }
 
     private static bool IsForegroundWindowInThisProcess()
@@ -211,95 +393,5 @@ public class QuickLookManager
         // in the pool, so releasing now can't blank a live preview.
         foreach (var provider in PluginManager.Instance.FilePreviewProviders)
             (provider as IPreviewSessionAware)?.EndPreviewSession();
-    }
-
-    private void PositionWindow(bool animate = false)
-    {
-        if (_window == null || _owner == null || !_window.IsVisible) return;
-
-        try
-        {
-            var ownerLeft = _owner.Left;
-            var ownerTop = _owner.Top;
-            var ownerWidth = _owner.ActualWidth;
-
-            // Use the work area of the monitor the owner is actually on -- not the primary monitor --
-            // so the right/left placement flip is correct when the search window sits on a secondary screen.
-            var ownerHandle = new System.Windows.Interop.WindowInteropHelper(_owner).Handle;
-            var workingArea = Screen.FromHandle(ownerHandle).WorkingArea;
-            var dpiScale = 1.0;
-            var src = PresentationSource.FromVisual(_owner);
-            if (src?.CompositionTarget != null) dpiScale = src.CompositionTarget.TransformFromDevice.M11;
-            // physical (system-DPI space) -> DIP
-            var screenLeft = workingArea.Left * dpiScale;
-            var screenTop = workingArea.Top * dpiScale;
-            var screenRight = workingArea.Right * dpiScale;
-            var screenBottom = workingArea.Bottom * dpiScale;
-
-            var previewInset = Views.QuickLook.QuickLookWindow.ContentMargin;
-
-            // Fixed, user-configurable size (General settings page) rather than mirroring the owner's
-            // current ActualHeight -- the owner auto-sizes to however many results are actually showing,
-            // so a preview window that copied it would resize unpredictably every time the result count
-            // changed instead of staying the same size like a real preview pane. Capped to the current
-            // monitor's own work area (plus the invisible shadow margin) -- repositioning alone can't
-            // keep a configured size fully on screen when that size is bigger than the monitor itself
-            // (e.g. the 1200px max preview height on a 768px-tall laptop display).
-            _window.Width = Math.Min(UiMetrics.PreviewWindowWidth, screenRight - screenLeft + 2 * previewInset);
-            _window.Height = Math.Min(UiMetrics.PreviewWindowHeight, screenBottom - screenTop + 2 * previewInset);
-
-            // Both the owner and this preview window use AllowsTransparency with an invisible margin
-            // around their actual visible card (room for a drop shadow) -- dock against those visible
-            // edges, not the outer window bounds, or the gap ends up several times bigger than DesiredGap.
-            const double DesiredGap = 10;
-            var ownerInset = (_owner as IHasVisibleContentInset)?.VisibleContentInset ?? new Thickness(0);
-
-            var dockedRight = true;
-            var targetLeft = ownerLeft + ownerWidth - ownerInset.Right + DesiredGap - previewInset;
-            if (targetLeft + _window.Width > screenRight)
-            {
-                targetLeft = ownerLeft + ownerInset.Left - DesiredGap - _window.Width + previewInset;
-                dockedRight = false;
-            }
-            var targetTop = ownerTop + ownerInset.Top - previewInset;
-
-            // Neither docking side, nor the owner's own vertical position, guarantees the preview's
-            // configured size (user-configurable, up to 900x1200) actually fits next to the owner on
-            // this monitor -- clamp against the monitor's work area on every edge so a large preview
-            // window always stays fully visible instead of running off-screen.
-            var minLeft = screenLeft - previewInset;
-            var maxLeft = screenRight - _window.Width + previewInset;
-            targetLeft = Math.Clamp(targetLeft, minLeft, Math.Max(minLeft, maxLeft));
-
-            var minTop = screenTop - previewInset;
-            var maxTop = screenBottom - _window.Height + previewInset;
-            targetTop = Math.Clamp(targetTop, minTop, Math.Max(minTop, maxTop));
-
-            // Clear any still-running/held slide-in animation before touching Left directly -- WPF keeps
-            // an animated dependency property pinned to the animation's value until the clock is cleared,
-            // so a bare assignment here would silently be ignored while one is active.
-            _window.BeginAnimation(Window.LeftProperty, null);
-            _window.Top = targetTop;
-
-            if (animate)
-            {
-                // Slide out like a drawer: start just short of the resting spot, on the side it docked
-                // to, and ease out to it -- rather than just snapping into place.
-                const double SlideDistance = 40;
-                var startLeft = dockedRight ? targetLeft - SlideDistance : targetLeft + SlideDistance;
-                _window.Left = startLeft;
-
-                var slideIn = new DoubleAnimation(startLeft, targetLeft, TimeSpan.FromMilliseconds(180))
-                {
-                    EasingFunction = new QuadraticEase { EasingMode = EasingMode.EaseOut }
-                };
-                _window.BeginAnimation(Window.LeftProperty, slideIn);
-            }
-            else
-            {
-                _window.Left = targetLeft;
-            }
-        }
-        catch { }
     }
 }

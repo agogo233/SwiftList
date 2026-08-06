@@ -9,12 +9,10 @@ internal sealed class MonitoredDir
     public string FilterPattern { get; set; } = "*";
 }
 
-/// <summary>
-/// Owns plugin directory registration and the FileSystemWatcher lifecycle backing it (create, retry on
-/// disconnect/error, teardown on unregister). Kept separate from <see cref="PluginDirectorySearcher"/>,
-/// which owns the actual local-vs-network query routing -- watching for changes and answering a search
-/// are different responsibilities that only share the registration list.
-/// </summary>
+// A registration's FilterPattern, in the "*.exe;*.lnk" form plugins register it in: split into the
+// single patterns Directory.EnumerateFiles accepts one at a time, and matched with the same Win32
+// wildcard semantics that call would apply, so an index-backed enumeration and a live filesystem walk
+// of the same directory agree on which names the pattern selects.
 internal static class FilterPatternHelper
 {
     public static string[] Split(string filterPattern)
@@ -23,12 +21,65 @@ internal static class FilterPatternHelper
         var patterns = filterPattern.Split(new[] { ';', ',' }, StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
         return patterns.Length > 0 ? patterns : new[] { "*" };
     }
+
+    // null = "everything matches", so a caller enumerating a whole subtree can skip per-name matching
+    // outright instead of running a wildcard match that can only ever return true.
+    public static string[]? SplitOrNullIfMatchAll(string? filterPattern)
+    {
+        var patterns = Split(filterPattern ?? string.Empty);
+        return patterns.Any(IsMatchAll) ? null : patterns;
+    }
+
+    public static bool Matches(string name, string[] patterns)
+    {
+        foreach (var pattern in patterns)
+        {
+            // Translated first, exactly as Directory.EnumerateFiles does before matching
+            // (FileSystemEnumerableFactory.NormalizeInputs): that is what turns "*.*" into "everything"
+            // and the trailing dot of "*." into the DOS wildcard meaning "no extension". Matching the
+            // raw expression would read both literally and quietly disagree with a live walk of the
+            // same directory. IsMatchAll stays as a fast path for the pattern nearly everyone uses.
+            if (IsMatchAll(pattern)
+                || System.IO.Enumeration.FileSystemName.MatchesWin32Expression(
+                    System.IO.Enumeration.FileSystemName.TranslateWin32Expression(pattern), name, ignoreCase: true))
+                return true;
+        }
+        return false;
+    }
+
+    private static bool IsMatchAll(string pattern) => pattern is "*" or "*.*";
 }
 
+/// <summary>
+/// Owns plugin directory registration and the FileSystemWatcher lifecycle backing it (create, retry on
+/// disconnect/error, teardown on unregister). Kept separate from <see cref="PluginDirectorySearcher"/>,
+/// which owns the actual local-vs-network query routing -- watching for changes and answering a search
+/// are different responsibilities that only share the registration list.
+/// </summary>
 internal sealed class PluginDirectoryWatchRegistry
 {
     private readonly ConcurrentDictionary<string, List<MonitoredDir>> _registrations = new(StringComparer.OrdinalIgnoreCase);
     private readonly ConcurrentDictionary<string, List<FileSystemWatcher>> _watchers = new(StringComparer.OrdinalIgnoreCase);
+    // Every "this changed" from either a watcher below or an index goes through here, so a burst becomes
+    // one notification and it lands after the index has caught up rather than before.
+    private readonly PluginDirectoryChangeNotifier _notifier;
+
+    public PluginDirectoryWatchRegistry() => _notifier = new PluginDirectoryChangeNotifier(AllRegistrations);
+
+    /// <summary>Every (plugin, directory) pair currently registered -- what the notifier matches a changed source against.</summary>
+    public IReadOnlyList<(string PluginId, string Path)> AllRegistrations()
+    {
+        var all = new List<(string, string)>();
+        foreach (var (pluginId, dirs) in _registrations)
+        {
+            lock (dirs)
+            {
+                foreach (var dir in dirs)
+                    all.Add((pluginId, dir.Path));
+            }
+        }
+        return all;
+    }
 
     public void RegisterDirectory(string pluginId, string directoryPath, bool recursive, string filterPattern)
     {
@@ -50,6 +101,8 @@ internal sealed class PluginDirectoryWatchRegistry
 
                 // Set up FileSystemWatcher for monitoring changes and alerting the plugin via SDK event
                 CreateWatcher(pluginId, fullPath, recursive, filterPattern);
+                // Only worth listening to the indexes once somebody has a directory in them.
+                _notifier.EnsureIndexSubscriptions();
             }
         }
     }
@@ -69,6 +122,8 @@ internal sealed class PluginDirectoryWatchRegistry
                 }
             }
             Logger.Log($"[IndexManager] Unregistered all directories for plugin '{pluginId}'.");
+            if (_registrations.IsEmpty)
+                _notifier.StopIndexSubscriptions();
         }
     }
 
@@ -108,8 +163,11 @@ internal sealed class PluginDirectoryWatchRegistry
                 watcher.Filters.Add(pattern);
             }
 
-            FileSystemEventHandler handler = (s, e) => PluginSdk.Services.DirectoryIndexerService.NotifyDirectoryChanged(pluginId);
-            RenamedEventHandler renamedHandler = (s, e) => PluginSdk.Services.DirectoryIndexerService.NotifyDirectoryChanged(pluginId);
+            // Reported, not notified: a single file write raises several events on its own, and a bulk
+            // copy raises thousands -- each of which used to invalidate the plugin's item cache and buy
+            // a full re-listing of every directory it registered.
+            FileSystemEventHandler handler = (s, e) => _notifier.Report(pluginId);
+            RenamedEventHandler renamedHandler = (s, e) => _notifier.Report(pluginId);
 
             watcher.Created += handler;
             watcher.Deleted += handler;
@@ -170,7 +228,7 @@ internal sealed class PluginDirectoryWatchRegistry
             {
                 Logger.Log($"[IndexManager] Directory '{fullPath}' resolved back online. Re-creating FileSystemWatcher.");
                 CreateWatcher(pluginId, fullPath, recursive, filterPattern);
-                PluginSdk.Services.DirectoryIndexerService.NotifyDirectoryChanged(pluginId); // Force load newly connected drive contents
+                _notifier.Report(pluginId); // Force load newly connected drive contents
                 return;
             }
         }

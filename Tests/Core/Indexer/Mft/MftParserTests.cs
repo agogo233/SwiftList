@@ -54,7 +54,7 @@ public sealed class MftParserTests
     }
 
     [TestMethod]
-    public void ParseDataRuns_MultipleRuns_AccumulatesLcnAndHandlesNegativeDelta()
+    public void ParseDataRuns_MultipleDataAttributes_AccumulatesExtentsFromAllDataAttributes()
     {
         var rec = BuildRecordWithDataRuns((runLen: 5, delta: 10), (runLen: 3, delta: -4));
 
@@ -62,8 +62,79 @@ public sealed class MftParserTests
 
         Assert.HasCount(2, extents);
         Assert.AreEqual((10L, 5L), extents[0]);
-        Assert.AreEqual((6L, 3L), extents[1]); // lcn accumulates: 10 + (-4) = 6
+        Assert.AreEqual((6L, 3L), extents[1]);
     }
+
+    [TestMethod]
+    public void ParseAttributeListRecordIndexes_ResidentAttributeList_ExtractsTargetAttributeRecordIndexes()
+    {
+        const int a = 32;
+        const int vo = 24;
+        var vp = a + vo;
+        var entry1Len = 0x18;
+        var recLen = vp + entry1Len * 2;
+        var buf = new byte[recLen];
+
+        WriteUInt16(buf, 0x14, a);
+        WriteUInt32(buf, a, 0x20); // $ATTRIBUTE_LIST
+        WriteUInt32(buf, a + 4, (uint)(recLen - a));
+        buf[a + 8] = 0; // resident
+        WriteUInt32(buf, a + 0x10, (uint)(entry1Len * 2)); // value length
+        WriteUInt16(buf, a + 0x14, vo);
+
+        // Entry 1: $DATA (0x80), mftRef = 15
+        WriteUInt32(buf, vp, 0x80);
+        WriteUInt16(buf, vp + 4, (ushort)entry1Len);
+        WriteInt64(buf, vp + 0x10, 15);
+
+        // Entry 2: $DATA (0x80), mftRef = 28
+        WriteUInt32(buf, vp + entry1Len, 0x80);
+        WriteUInt16(buf, vp + entry1Len + 4, (ushort)entry1Len);
+        WriteInt64(buf, vp + entry1Len + 0x10, 28);
+
+        var indexes = MftParser.ParseAttributeListRecordIndexes(buf, 0x80);
+
+        Assert.HasCount(2, indexes);
+        Assert.AreEqual(15uL, indexes[0]);
+        Assert.AreEqual(28uL, indexes[1]);
+    }
+
+    [TestMethod]
+    public void ParseAttributeListRecordIndexes_NonResidentAttributeList_ParsesClustersAndExtractsIndexes()
+    {
+        const int a = 32;
+        var buf = new byte[128];
+        WriteUInt16(buf, 0x14, a);
+        WriteUInt32(buf, a, 0x20); // $ATTRIBUTE_LIST
+        WriteUInt32(buf, a + 4, 64);
+        buf[a + 8] = 1; // non-resident
+        WriteUInt16(buf, a + 0x20, 48); // mpOff (relative to a, so p = 32 + 48 = 80)
+        WriteInt64(buf, a + 0x30, 0x18); // realSize = 24 bytes
+
+        // Data run at offset 80: len=1 cluster, lcn=10
+        buf[80] = 0x11;
+        buf[81] = 1; // runLen = 1 cluster
+        buf[82] = 10; // LCN delta = +10
+
+        // Attribute list entry buffer (24 bytes): $DATA (0x80), mftRef = 99
+        var attrListBuffer = new byte[24];
+        WriteUInt32(attrListBuffer, 0, 0x80);
+        WriteUInt16(attrListBuffer, 4, 0x18);
+        WriteInt64(attrListBuffer, 0x10, 99);
+
+        var readCalled = false;
+        var indexes = MftParser.ParseAttributeListRecordIndexes(buf, 0x80, (off, targetBuf, count) =>
+        {
+            readCalled = true;
+            attrListBuffer.CopyTo(targetBuf, 0);
+            return true;
+        }, 4096);
+
+        Assert.IsTrue(readCalled);
+        Assert.HasCount(1, indexes);
+        Assert.AreEqual(99uL, indexes[0]);
+    }
+
 
     [TestMethod]
     public void ParseDataRuns_NoDataAttribute_ReturnsEmpty()
@@ -112,7 +183,7 @@ public sealed class MftParserTests
     }
 
     [TestMethod]
-    public void CollectNames_DosOnlyShortName_IsExcluded()
+    public void CollectNames_DosOnlyShortName_UsesFallback()
     {
         const int a = 32;
         const int vo = 24;
@@ -129,13 +200,14 @@ public sealed class MftParserTests
         WriteInt64(buf, vp, 1); // parent
         WriteInt64(buf, vp + 0x30, 1); // size
         buf[vp + 0x40] = (byte)name.Length;
-        buf[vp + 0x41] = 2; // DOS-only namespace -> must be excluded
+        buf[vp + 0x41] = 2; // DOS-only namespace -> fallback as last resort when no Win32 name
         WriteBytes(buf, vp + 0x42, Encoding.Unicode.GetBytes(name));
 
         var names = new List<(UInt128 parent, string name, long size)>();
         MftParser.CollectNames(buf, 0, buf.Length, names, out _, out _, out _);
 
-        Assert.IsEmpty(names);
+        Assert.HasCount(1, names);
+        Assert.AreEqual(name, names[0].name);
     }
 
     private static byte[] BuildFullRecord(out string expectedName)

@@ -1,7 +1,6 @@
 using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Input;
-using SwiftList.App.Services;
 
 using SwiftList.App.Services.Theme;
 using SwiftList.App.Helpers.Visuals;
@@ -16,6 +15,7 @@ public partial class CustomMessageBoxWindow : Window
         InitializeComponent();
 
         SystemMenuBlocker.Attach(this);
+        AltTabExcluder.Attach(this);
         ThemedWindowIconHelper.Apply(this);
         ThemedWindowIconHelper.Apply(TitleBarLogo, this);
 
@@ -23,6 +23,54 @@ public partial class CustomMessageBoxWindow : Window
         TxtMessage.Text = messageBoxText;
 
         SetupIcon(icon);
+        SetupButtons(button);
+    }
+
+    protected override void OnKeyDown(System.Windows.Input.KeyEventArgs e)
+    {
+        base.OnKeyDown(e);
+        if (e.Key == Key.Escape)
+        {
+            Close();
+        }
+    }
+
+    private void SetupButtons(MessageBoxButton button)
+    {
+        switch (button)
+        {
+            case MessageBoxButton.OK:
+                BtnOK.Visibility = Visibility.Visible;
+                BtnCancel.Visibility = Visibility.Collapsed;
+                BtnYes.Visibility = Visibility.Collapsed;
+                BtnNo.Visibility = Visibility.Collapsed;
+                BtnOK.IsDefault = true;
+                break;
+            case MessageBoxButton.OKCancel:
+                BtnOK.Visibility = Visibility.Visible;
+                BtnCancel.Visibility = Visibility.Visible;
+                BtnYes.Visibility = Visibility.Collapsed;
+                BtnNo.Visibility = Visibility.Collapsed;
+                BtnOK.IsDefault = true;
+                BtnCancel.IsCancel = true;
+                break;
+            case MessageBoxButton.YesNo:
+                BtnOK.Visibility = Visibility.Collapsed;
+                BtnCancel.Visibility = Visibility.Collapsed;
+                BtnYes.Visibility = Visibility.Visible;
+                BtnNo.Visibility = Visibility.Visible;
+                BtnYes.IsDefault = true;
+                BtnNo.IsCancel = true;
+                break;
+            case MessageBoxButton.YesNoCancel:
+                BtnOK.Visibility = Visibility.Collapsed;
+                BtnCancel.Visibility = Visibility.Visible;
+                BtnYes.Visibility = Visibility.Visible;
+                BtnNo.Visibility = Visibility.Visible;
+                BtnYes.IsDefault = true;
+                BtnCancel.IsCancel = true;
+                break;
+        }
     }
 
     private void SetupIcon(MessageBoxImage icon)
@@ -67,5 +115,39 @@ public partial class CustomMessageBoxWindow : Window
     {
         Result = MessageBoxResult.OK;
         Close();
+    }
+
+    private void BtnCancel_Click(object sender, RoutedEventArgs e)
+    {
+        Result = MessageBoxResult.Cancel;
+        Close();
+    }
+
+    private void BtnYes_Click(object sender, RoutedEventArgs e)
+    {
+        Result = MessageBoxResult.Yes;
+        Close();
+    }
+
+    private void BtnNo_Click(object sender, RoutedEventArgs e)
+    {
+        Result = MessageBoxResult.No;
+        Close();
+    }
+
+    public void SetCustomButtonTexts(string? okText, string? cancelText)
+    {
+        if (!string.IsNullOrEmpty(okText))
+        {
+            BtnOK.Content = okText;
+            BtnOK.Width = double.NaN;
+            BtnOK.Padding = new Thickness(14, 0, 14, 0);
+        }
+        if (!string.IsNullOrEmpty(cancelText))
+        {
+            BtnCancel.Content = cancelText;
+            BtnCancel.Width = double.NaN;
+            BtnCancel.Padding = new Thickness(14, 0, 14, 0);
+        }
     }
 }

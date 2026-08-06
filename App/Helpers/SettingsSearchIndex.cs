@@ -1,3 +1,4 @@
+using System.Windows;
 using SwiftList.App.ViewModels.Settings;
 
 namespace SwiftList.App.Helpers;
@@ -33,7 +34,8 @@ public static class SettingsSearchIndex
         // still drive the highlight flash.
         new("Settings_Service", "Service"),
         new("Service_Title", "Service"),
-        new("Service_ActionInstall", "Service", TargetElementName: "RowActionInstall"),
+        new("Service_ActionInstall", "Service", TargetElementName: "RowActionInstall",
+            IsVisible: vm => vm.Service.InstallButtonVisibility == Visibility.Visible),
         new("Service_ClearLog", "Service", TargetElementName: "RowClearLog"),
         new("Service_LogTab_App", "Service", vm => vm.Log.SelectedTab = "App"),
         new("Service_LogTab_Hook", "Service", vm => vm.Log.SelectedTab = "Hook"),
@@ -70,14 +72,22 @@ public static class SettingsSearchIndex
         new("General_AutoSilentUpdate", "General", vm => vm.General.SelectedTab = "System", "TabSystem/RowAutoSilentUpdate", "General_SysTitle"),
         new("General_HardwareAcceleration", "General", vm => vm.General.SelectedTab = "System", "TabSystem/RowHardwareAcceleration", "General_SysTitle"),
         new("General_HideTrayIcon", "General", vm => vm.General.SelectedTab = "System", "TabSystem/RowHideTrayIcon", "General_SysTitle"),
+        new("General_EnableFuzzyMatch", "General", vm => vm.General.SelectedTab = "System", "TabSystem/RowEnableFuzzyMatch", "General_SysTitle"),
+        new("General_GlobalTokenPrefix", "General", vm => vm.General.SelectedTab = "System", "TabSystem/RowGlobalTokenPrefix", "General_SysTitle"),
         new("General_LogLevel", "General", vm => vm.General.SelectedTab = "System", "TabSystem/RowLogLevel", "General_SysTitle"),
         new("General_LangSelect", "General", vm => vm.General.SelectedTab = "System", "TabSystem/RowLangSelect", "General_SysTitle"),
+        new("General_DefaultFileManagerEnabled", "General", vm => vm.General.SelectedTab = "System", "TabSystem/RowDefaultFileManagerEnabled", "General_SysTitle"),
+        new("General_DefaultFileManagerPath", "General", vm => vm.General.SelectedTab = "System", "TabSystem/RowDefaultFileManagerPath", "General_SysTitle",
+            IsVisible: vm => vm.General.DefaultFileManagerEnabled),
+        new("General_DefaultFileManagerParameter", "General", vm => vm.General.SelectedTab = "System", "TabSystem/RowDefaultFileManagerParameter", "General_SysTitle",
+            IsVisible: vm => vm.General.DefaultFileManagerEnabled),
         new("General_LayoutTitle", "General", vm => vm.General.SelectedTab = "Layout", "TabLayout"),
         new("General_LayoutSectionTitle", "General", vm => vm.General.SelectedTab = "Layout", "TabLayout/RowLayoutSectionTitle", "General_LayoutTitle"),
         new("General_LayoutWidth", "General", vm => vm.General.SelectedTab = "Layout", "TabLayout/RowLayoutWidth", "General_LayoutTitle", "General_LayoutSectionTitle"),
         new("General_LayoutHeight", "General", vm => vm.General.SelectedTab = "Layout", "TabLayout/RowLayoutHeight", "General_LayoutTitle", "General_LayoutSectionTitle"),
         new("General_LayoutShowClock", "General", vm => vm.General.SelectedTab = "Layout", "TabLayout/RowLayoutShowClock", "General_LayoutTitle", "General_LayoutSectionTitle"),
         new("General_LayoutReopenFullWindowOnHotkey", "General", vm => vm.General.SelectedTab = "Layout", "TabLayout/RowLayoutReopenFullWindow", "General_LayoutTitle", "General_LayoutSectionTitle"),
+        new("General_LayoutLockPosition", "General", vm => vm.General.SelectedTab = "Layout", "TabLayout/RowLayoutLockPosition", "General_LayoutTitle", "General_LayoutSectionTitle"),
         new("General_LayoutReset", "General", vm => vm.General.SelectedTab = "Layout", "TabLayout/RowLayoutReset", "General_LayoutTitle", "General_LayoutSectionTitle"),
         new("General_ResultTypeOrderTitle", "General", vm => vm.General.SelectedTab = "Layout", "TabLayout/RowResultTypeOrderList", "General_LayoutTitle"),
         new("General_PreviewWindowTitle", "General", vm => vm.General.SelectedTab = "PreviewWindow", "TabPreviewWindow"),
@@ -93,6 +103,9 @@ public static class SettingsSearchIndex
         new("General_ActionMenuGroupOrderTitle", "General", vm => vm.General.SelectedTab = "SearchWindow", "TabSearchWindow/RowActionMenuGroupOrderList", "General_SearchWindowTitle"),
         new("General_QuickNavTitle", "General", vm => vm.General.SelectedTab = "QuickNavigation", "TabQuickNavigation"),
         new("General_QuickNavListTitle", "General", vm => vm.General.SelectedTab = "QuickNavigation", "TabQuickNavigation/RowQuickNavList", "General_QuickNavTitle"),
+        new("General_PreviewProvidersTitle", "General", vm => vm.General.SelectedTab = "PreviewProviders", "TabPreviewProviders"),
+        new("General_PreviewProvidersListTitle", "General", vm => vm.General.SelectedTab = "PreviewProviders", "TabPreviewProviders/RowPreviewProvidersList", "General_PreviewProvidersTitle"),
+        new("General_ThumbnailProvidersListTitle", "General", vm => vm.General.SelectedTab = "PreviewProviders", "TabPreviewProviders/RowThumbnailProvidersList", "General_PreviewProvidersTitle"),
 
         // Appearance
         new("Settings_Appearance", "Appearance"),
@@ -115,7 +128,7 @@ public static class SettingsSearchIndex
         // "outer/inner" FindName-hop pattern as the History tab entries further down.
         new("Hotkeys_GroupGlobal", "Hotkeys", vm => vm.Hotkeys.SelectedTab = "Global", "TabGlobal/RowGroupGlobal", "Hotkeys_Tab_Global"),
         new("Hotkeys_ToggleLabel", "Hotkeys", vm => vm.Hotkeys.SelectedTab = "Global", "TabGlobal/RowToggleHotkey", "Hotkeys_Tab_Global"),
-        new("Hotkeys_AllowInFullscreen", "Hotkeys", vm => vm.Hotkeys.SelectedTab = "Global", "TabGlobal/RowToggleHotkey", "Hotkeys_Tab_Global"),
+        new("Hotkeys_AllowInFullscreen", "Hotkeys", vm => vm.Hotkeys.SelectedTab = "Global", "TabGlobal/RowAllowHotkeysInFullscreen", "Hotkeys_Tab_Global"),
         new("Hotkeys_QuickSwitchLabel", "Hotkeys", vm => vm.Hotkeys.SelectedTab = "Global", "TabGlobal/RowQuickSwitch", "Hotkeys_Tab_Global"),
         new("Hotkeys_SelectionTitle", "Hotkeys", vm => vm.Hotkeys.SelectedTab = "Global", "TabGlobal/RowSelectionTitle", "Hotkeys_Tab_Global"),
         new("Hotkeys_SelectNextItem", "Hotkeys", vm => vm.Hotkeys.SelectedTab = "Global", "TabGlobal/RowSelectNext", "Hotkeys_Tab_Global"),
@@ -128,14 +141,18 @@ public static class SettingsSearchIndex
         new("Hotkeys_KeywordHistoryNext", "Hotkeys", vm => vm.Hotkeys.SelectedTab = "Global", "TabGlobal/RowKeywordHistoryNext", "Hotkeys_Tab_Global"),
         new("Hotkeys_KeywordHistoryDelete", "Hotkeys", vm => vm.Hotkeys.SelectedTab = "Global", "TabGlobal/RowKeywordHistoryDelete", "Hotkeys_Tab_Global"),
         new("Hotkeys_OpenFullWindow", "Hotkeys", vm => vm.Hotkeys.SelectedTab = "Global", "TabGlobal/RowOpenFullWindow", "Hotkeys_Tab_Global"),
+        new("Hotkeys_LocalSendSendWindow", "Hotkeys", vm => vm.Hotkeys.SelectedTab = "Global", "TabGlobal/RowLocalSendSendWindow", "Hotkeys_Tab_Global"),
+        new("Hotkeys_StayOpen", "Hotkeys", vm => vm.Hotkeys.SelectedTab = "Global", "TabGlobal/RowStayOpen", "Hotkeys_Tab_Global"),
+        new("Hotkeys_QuickPanel", "Hotkeys", vm => vm.Hotkeys.SelectedTab = "Global", "TabGlobal/RowQuickPanel", "Hotkeys_Tab_Global"),
         new("Hotkeys_GroupQuickNav", "Hotkeys", vm => vm.Hotkeys.SelectedTab = "Global", "TabGlobal/RowGroupQuickNav", "Hotkeys_Tab_Global"),
         new("Hotkeys_QuickNavDoubleClick", "Hotkeys", vm => vm.Hotkeys.SelectedTab = "Global", "TabGlobal/RowQuickNavDoubleClick", "Hotkeys_Tab_Global"),
         new("Hotkeys_QuickNavMiddleClick", "Hotkeys", vm => vm.Hotkeys.SelectedTab = "Global", "TabGlobal/RowQuickNavMiddleClick", "Hotkeys_Tab_Global"),
-        new("Hotkeys_GroupStartupPanel", "Hotkeys", vm => vm.Hotkeys.SelectedTab = "Global", "TabGlobal/RowGroupStartupPanel", "Hotkeys_Tab_Global"),
-        new("Hotkeys_StartupPanelNextTab", "Hotkeys", vm => vm.Hotkeys.SelectedTab = "Global", "TabGlobal/RowStartupPanelNextTab", "Hotkeys_Tab_Global"),
-        new("Hotkeys_StartupPanelPreviousTab", "Hotkeys", vm => vm.Hotkeys.SelectedTab = "Global", "TabGlobal/RowStartupPanelPreviousTab", "Hotkeys_Tab_Global"),
         new("Hotkeys_Tab_PluginActions", "Hotkeys", vm => vm.Hotkeys.SelectedTab = "PluginActions", "TabPluginActions"),
         new("Settings_Blacklist", "Hotkeys", vm => vm.Hotkeys.SelectedTab = "Blacklist", "TabBlacklist"),
+        new("Blacklist_GlobalTitle", "Hotkeys", vm => vm.Hotkeys.SelectedTab = "Blacklist", "TabBlacklist/RowBlacklistGlobal", "Settings_Blacklist"),
+        // The quick panel's own blacklist is edited here, beside the global one it adds to, so it is
+        // found under Hotkeys rather than on the panel's page.
+        new("QuickPanel_BlacklistTitle", "Hotkeys", vm => vm.Hotkeys.SelectedTab = "Blacklist", "TabBlacklist/RowQuickPanelBlacklist", "Settings_Blacklist"),
 
         // Plugins (component-level results come from the live Plugins model, see SettingsWindow.xaml.cs)
         new("Settings_Plugins", "Plugins"),
@@ -158,18 +175,22 @@ public static class SettingsSearchIndex
         new("Settings_History_Enable", "History", vm => vm.History.SelectedTab = "Keyword", "TabKeywordHistory/ChkEnable", "Settings_History_Tab_Keyword"),
         new("Settings_History_Clear_All", "History", vm => vm.History.SelectedTab = "Keyword", "TabKeywordHistory/BtnClearAll", "Settings_History_Tab_Keyword"),
 
-        // Startup Panel
-        new("Settings_StartupPanel", "StartupPanel"),
-        new("StartupPanel_Enabled", "StartupPanel", TargetElementName: "RowStartupPanelEnabled"),
-        new("StartupPanel_TabRecentFiles", "StartupPanel", vm => vm.StartupPanel.SelectedSubTab = "RecentFiles", "SubTabRecentFiles"),
-        new("StartupPanel_RecentFilesEnabled", "StartupPanel", vm => vm.StartupPanel.SelectedSubTab = "RecentFiles", "SubTabRecentFiles/RowRecentFilesEnabled", "StartupPanel_TabRecentFiles"),
-        new("StartupPanel_RecentFilesDirectoriesDesc", "StartupPanel", vm => vm.StartupPanel.SelectedSubTab = "RecentFiles", "SubTabRecentFiles/RowRecentFilesDirectories", "StartupPanel_TabRecentFiles"),
-        new("StartupPanel_RecentFilesCountDesc", "StartupPanel", vm => vm.StartupPanel.SelectedSubTab = "RecentFiles", "SubTabRecentFiles/RowRecentFilesCount", "StartupPanel_TabRecentFiles"),
-        new("StartupPanel_RecentFilesMaxAgeDesc", "StartupPanel", vm => vm.StartupPanel.SelectedSubTab = "RecentFiles", "SubTabRecentFiles/RowRecentFilesMaxAge", "StartupPanel_TabRecentFiles"),
-        new("StartupPanel_TabLastDirectory", "StartupPanel", vm => vm.StartupPanel.SelectedSubTab = "LastDirectory", "SubTabLastDirectory"),
-        new("StartupPanel_LastDirectoryEnabled", "StartupPanel", vm => vm.StartupPanel.SelectedSubTab = "LastDirectory", "RowLastDirectoryEnabled", "StartupPanel_TabLastDirectory"),
-        new("StartupPanel_TabPluginTabs", "StartupPanel", vm => vm.StartupPanel.SelectedSubTab = "PluginTabs", "SubTabPluginTabs"),
-        new("StartupPanel_TabOrder", "StartupPanel", vm => vm.StartupPanel.SelectedSubTab = "TabOrder", "SubTabOrder"),
+        new("Settings_QuickPanel", "QuickPanel"),
+        new("QuickPanel_Enabled", "QuickPanel", TargetElementName: "RowQuickPanelEnabled"),
+        new("QuickPanel_Workspaces", "QuickPanel", vm => { vm.QuickPanel.SelectedSection = "Workspaces"; vm.QuickPanel.SelectedSubTab = "Sources"; }),
+        new("QuickPanel_WorkspaceName", "QuickPanel", vm => { vm.QuickPanel.SelectedSection = "Workspaces"; vm.QuickPanel.SelectedSubTab = "Sources"; }, TargetElementName: "RowQuickPanelWorkspaceName"),
+        new("QuickPanel_ProcessesDesc", "QuickPanel", vm => { vm.QuickPanel.SelectedSection = "Workspaces"; vm.QuickPanel.SelectedSubTab = "Processes"; }, TargetElementName: "RowQuickPanelProcesses", TabLabelKey: "QuickPanel_Workspaces"),
+        new("QuickPanel_PluginTabs", "QuickPanel", vm => vm.QuickPanel.SelectedSection = "PluginTabs"),
+
+        // LocalSend
+        new("Settings_LocalSend_Title", "LocalSend"),
+        new("Settings_LocalSend_Enable", "LocalSend", TargetElementName: "RowLocalSendEnable"),
+        new("Settings_LocalSend_DeviceAlias", "LocalSend", TargetElementName: "RowLocalSendDeviceAlias"),
+        new("Settings_LocalSend_DiscoveryTimeout", "LocalSend", TargetElementName: "RowLocalSendDiscoveryTimeout"),
+        new("Settings_LocalSend_ReceivePin", "LocalSend", TargetElementName: "RowLocalSendReceivePin"),
+        new("Settings_LocalSend_EnableHttps", "LocalSend", TargetElementName: "RowLocalSendEnableHttps"),
+        new("Settings_LocalSend_QuickSave", "LocalSend", TargetElementName: "RowLocalSendQuickSave"),
+        new("Settings_LocalSend_DownloadDir", "LocalSend", TargetElementName: "RowLocalSendDownloadDir"),
 
         // About
         new("Settings_About", "About"),

@@ -2,7 +2,6 @@ using System.Windows;
 using SwiftList.Core;
 using SwiftList.App.Services;
 
-using SwiftList.App.ViewModels.Search.StartupPanel;
 using SwiftList.Core.SearchIndex.Query;
 using SwiftList.App.ViewModels.Search.Mapping;
 namespace SwiftList.App.ViewModels.Search.Dispatch;
@@ -13,7 +12,6 @@ namespace SwiftList.App.ViewModels.Search.Dispatch;
 internal sealed class SearchDispatchController
 {
     private readonly SearchExecutionEngine _engine;
-    private readonly StartupPanelController _startupPanel;
     private readonly QuickSearchViewModel _mainVm;
     private readonly Func<string?> _getSearchScope;
     private readonly Func<bool> _getIsInlineSearchContext;
@@ -30,7 +28,6 @@ internal sealed class SearchDispatchController
 
     public SearchDispatchController(
         SearchExecutionEngine engine,
-        StartupPanelController startupPanel,
         QuickSearchViewModel mainVm,
         Func<string?> getSearchScope,
         Func<bool> getIsInlineSearchContext,
@@ -42,7 +39,6 @@ internal sealed class SearchDispatchController
         Func<int> getResultsCount)
     {
         _engine = engine;
-        _startupPanel = startupPanel;
         _mainVm = mainVm;
         _getSearchScope = getSearchScope;
         _getIsInlineSearchContext = getIsInlineSearchContext;
@@ -53,7 +49,6 @@ internal sealed class SearchDispatchController
         _replaceResults = replaceResults;
         _getResultsCount = getResultsCount;
         _resultTypeTrigger = new ResultTypeTriggerHandler(
-            startupPanel,
             getIsInlineSearchContext,
             setIsSearching,
             setResultsPanelVisibility,
@@ -63,7 +58,8 @@ internal sealed class SearchDispatchController
 
     public void DispatchSearch(string value)
     {
-        var strippedTrailing = SearchQuerySortParser.Strip(value, out var tokens);
+        var globalPrefixChar = GetGlobalTokenPrefixChar();
+        var strippedTrailing = SearchQuerySortParser.Strip(value, out var tokens, globalPrefixChar);
         _queryTokens = tokens;
         var cleanQuery = SearchQuerySortParser.StripExclusionBypass(strippedTrailing, out var bypassExclusions);
         _bypassExclusions = bypassExclusions;
@@ -100,10 +96,6 @@ internal sealed class SearchDispatchController
     private void ClearForTokenOnlyQuery()
     {
         _setIsSearching(false);
-        // The startup panel's tab strip has its own Visibility separate from the results panel below --
-        // if it was already showing (box was empty a moment ago), it must be explicitly hidden here too,
-        // not just have its results cleared underneath it.
-        _startupPanel.Deactivate();
         _replaceResults(new[] { SearchResultMapper.CreateKeepTypingPromptResult() });
         _setResultsPanelVisibility(Visibility.Visible);
         _setResultsSeparatorVisibility(Visibility.Visible);
@@ -126,7 +118,7 @@ internal sealed class SearchDispatchController
         // Widening the budget to match the main SearchWindow's own (already-proven-viable) limit, and
         // skipping BuildQuickResults' display cap, only costs anything on the less-common token path.
         var hasTokens = _queryTokens.Count > 0;
-        var fileLimit = hasTokens ? SearchViewModel.FullSearchFileLimit : 51;
+        var fileLimit = hasTokens ? SearchViewModel.TokenQuickSearchFileLimit : 51;
         var appLimit = hasTokens ? SearchViewModel.FullSearchAppLimit : 51;
 
         engineCall(
@@ -151,39 +143,22 @@ internal sealed class SearchDispatchController
             _engine.CancelPendingSearch();
             _setIsSearching(false);
 
+            // An empty box shows nothing but the one suggestion the active Explorer window earns, if it
+            // earns one. It used to also raise the startup panel here, which is what that panel was:
+            // the empty-query state of this window. The quick panel took over what it offered and is
+            // reached by its own key, so an empty box is simply empty again.
             var suggestion = ExplorerJumpSuggestionHelper.TryBuildSuggestion(_getIsInlineSearchContext(), _getSearchScope());
             if (suggestion != null)
             {
-                _startupPanel.Deactivate();
                 _replaceResults(new[] { suggestion });
                 _setResultsPanelVisibility(Visibility.Visible);
                 _setResultsSeparatorVisibility(Visibility.Visible);
             }
-            else if (_getIsInlineSearchContext())
+            else
             {
-                _startupPanel.Deactivate();
                 _replaceResults(Array.Empty<AppSearchResult>());
                 _setResultsPanelVisibility(Visibility.Collapsed);
                 _setResultsSeparatorVisibility(Visibility.Collapsed);
-            }
-            else
-            {
-                // Only skip the eager clear when the startup panel was ALREADY what's on screen --
-                // there, the old data is still a valid "startup panel" snapshot, and TryActivateAsync
-                // swaps it for fresh data atomically once its fetch resolves (avoiding the empty->filled
-                // flash re-showing the window used to produce). But if a real search's results are what's
-                // currently showing (the box just got cleared), those are NOT valid startup-panel content
-                // -- leaving them up would mean a slow first fetch (e.g. a cold service's IPC round trip)
-                // looks like the search is "stuck" showing old matches instead of clearing, which is worse
-                // than the flash this was meant to avoid. Clear immediately in that case; the fetch still
-                // fills the panel in normally once it resolves.
-                if (_startupPanel.Visibility != Visibility.Visible)
-                {
-                    _replaceResults(Array.Empty<AppSearchResult>());
-                    _setResultsPanelVisibility(Visibility.Collapsed);
-                    _setResultsSeparatorVisibility(Visibility.Collapsed);
-                }
-                _ = ActivateStartupPanelAsync();
             }
 
             if (_mainVm.Monitor.IsIndexReady)
@@ -198,7 +173,8 @@ internal sealed class SearchDispatchController
             return;
         }
 
-        var strippedTrailing = SearchQuerySortParser.Strip(query, out var tokens);
+        var globalPrefixChar = GetGlobalTokenPrefixChar();
+        var strippedTrailing = SearchQuerySortParser.Strip(query, out var tokens, globalPrefixChar);
         _queryTokens = tokens;
         var cleanQuery = SearchQuerySortParser.StripExclusionBypass(strippedTrailing, out var bypassExclusions);
         _bypassExclusions = bypassExclusions;
@@ -219,26 +195,6 @@ internal sealed class SearchDispatchController
 
     private void HandleLocalServiceUnavailable() => _mainVm.TriggerIndexBuild();
 
-    private async Task ActivateStartupPanelAsync()
-    {
-        var shown = await _startupPanel.TryActivateAsync();
-        if (!string.IsNullOrWhiteSpace(_getSearchQuery()))
-            return; // a real query started while the fetch was in flight; ApplySearchResults handled visibility
-
-        if (!shown)
-        {
-            // Nothing to show (panel disabled, or every source came back empty) -- PerformSearch no
-            // longer clears eagerly before kicking this off, so it's on us to clear here instead.
-            _replaceResults(Array.Empty<AppSearchResult>());
-            _setResultsPanelVisibility(Visibility.Collapsed);
-            _setResultsSeparatorVisibility(Visibility.Collapsed);
-            return;
-        }
-
-        _setResultsPanelVisibility(Visibility.Visible);
-        _setResultsSeparatorVisibility(Visibility.Visible);
-    }
-
     private void ApplySearchResults(string query, List<AppSearchResult> uiResults, string statusText, bool final)
     {
         if (_getSearchQuery() != query)
@@ -252,7 +208,6 @@ internal sealed class SearchDispatchController
             // own files right under its own header) -- token mode is the only case that needs to
             // extract/re-filter/re-cap that structure, since it collapses it into a flat file list anyway.
             _replaceResults(uiResults);
-            _startupPanel.Deactivate();
 
             var hasResults = uiResults.Count > 0;
             _setResultsPanelVisibility(hasResults ? Visibility.Visible : Visibility.Collapsed);
@@ -313,7 +268,6 @@ internal sealed class SearchDispatchController
 
         // ReplaceResults reconciles row-by-row and no-ops when nothing changed, so no pre-check needed.
         _replaceResults(composed);
-        _startupPanel.Deactivate();
 
         var hasResults = composed.Count > 0;
         _setResultsPanelVisibility(hasResults ? Visibility.Visible : Visibility.Collapsed);
@@ -326,4 +280,10 @@ internal sealed class SearchDispatchController
 
     private static bool IsGenuineInstantResult(AppSearchResult r) =>
         r.ResultKind == "InstantResult" && r.SourceProvider is PluginSdk.Abstractions.Plugins.IInstantResultProvider;
+
+    private static char GetGlobalTokenPrefixChar()
+    {
+        var prefix = UserSettings.Load().GlobalTokenPrefix;
+        return !string.IsNullOrEmpty(prefix) ? prefix[0] : ':';
+    }
 }

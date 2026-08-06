@@ -7,18 +7,18 @@ public sealed class TreeBuilderCheckpointExtensionsTests
 {
     private static TreeBuilder CreateBuilder(
         string root,
-        Action<int>? onProgress = null,
+        Action<int, int>? onProgress = null,
         Action<FileRecordStore, NetworkDriveWalkStats>? onCheckpoint = null) => new(
         new FileRecordStore(), root, root,
         new WalkOptions([], [], [], MaxDepth: 0, WorkerCount: 1, UseIgnoreFiles: false),
-        CancellationToken.None, onProgress ?? (_ => { }), onCheckpoint);
+        CancellationToken.None, onProgress ?? ((_, _) => { }), onCheckpoint);
 
     [TestMethod]
     public void MaybeCheckpoint_NoOnCheckpointCallback_NeverFiresProgressEither()
     {
         using var dir = new TempDirectory();
         var progressCalls = 0;
-        var builder = CreateBuilder(dir.Path, onProgress: _ => progressCalls++, onCheckpoint: null);
+        var builder = CreateBuilder(dir.Path, onProgress: (_, _) => progressCalls++, onCheckpoint: null);
 
         for (var i = 0; i < TreeBuilder.CheckpointBatchSize + 10; i++)
             builder.MaybeCheckpoint(i);
@@ -50,12 +50,35 @@ public sealed class TreeBuilderCheckpointExtensionsTests
             builder.MaybeCheckpoint(i);
         Assert.AreEqual(1, checkpointCalls);
 
-        for (var i = 0; i < TreeBuilder.CheckpointBatchSize - 1; i++)
+        // The gap doubles after every checkpoint (see the next test), so the SECOND one needs
+        // CheckpointBatchSize * 2 calls, not another CheckpointBatchSize -- one short of that still
+        // shouldn't fire.
+        for (var i = 0; i < TreeBuilder.CheckpointBatchSize * 2 - 1; i++)
             builder.MaybeCheckpoint(i);
         Assert.AreEqual(1, checkpointCalls);
 
         builder.MaybeCheckpoint(0);
         Assert.AreEqual(2, checkpointCalls);
+    }
+
+    [TestMethod]
+    public void MaybeCheckpoint_EachFiring_DoublesTheGapUntilTheCap()
+    {
+        using var dir = new TempDirectory();
+        var builder = CreateBuilder(dir.Path, onCheckpoint: (_, _) => { });
+
+        var expectedGap = TreeBuilder.CheckpointBatchSize;
+        for (var fireNumber = 1; fireNumber <= 8; fireNumber++)
+        {
+            Assert.AreEqual(expectedGap, builder._checkpointGate.BatchSize, $"gap before firing #{fireNumber}");
+            for (var i = 0; i < expectedGap; i++)
+                builder.MaybeCheckpoint(i);
+            expectedGap = Math.Min(expectedGap * 2, TreeBuilder.MaxCheckpointBatchSize);
+        }
+
+        // CheckpointBatchSize (4096) doubled 6 times already exceeds MaxCheckpointBatchSize (262144),
+        // so by the 7th/8th firing the gap must have stopped growing at the cap.
+        Assert.AreEqual(TreeBuilder.MaxCheckpointBatchSize, builder._checkpointGate.BatchSize);
     }
 
     [TestMethod]

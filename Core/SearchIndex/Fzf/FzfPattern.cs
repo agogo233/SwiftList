@@ -1,5 +1,10 @@
 namespace SwiftList.Core.SearchIndex.Fzf;
 
+// Alias-fallback quality-gating (IsAcceptableAliasMatch/WeightAliasMatch and their private helpers)
+// lives in FzfPatternAliasMatchExtensions.cs (extension methods, matching TreeBuilder's Checkpoint/Diff
+// split and MenuBuilder's ContentExtensions split) instead of a partial class, to keep this file under
+// the project's line limit. This file keeps pattern parsing (Parse/ParseText/ParseTermSets) and the core
+// text-matching algorithm (TryMatch/TryMatchSingle).
 internal sealed class FzfPattern
 {
     private FzfPattern(string? targetDrive, FzfTermSet[] termSets)
@@ -12,6 +17,15 @@ internal sealed class FzfPattern
     public FzfTermSet[] TermSets { get; }
     public bool IsEmpty => TermSets.Length == 0;
 
+    // How much text the user actually typed, which is what the alias-fallback quality gate scales its
+    // thresholds against (see IsAcceptableAliasMatch). A term set holds ALTERNATIVES -- one OR branch,
+    // or one of the spellings an alias provider offers for the same term -- so only one of them can
+    // ever be what was typed, and only one is counted.
+    //
+    // Summing them instead made the gate reject genuine matches as soon as a term had several
+    // alternatives: "jiating" expands to six pinyin readings, which inflated the length from 7 to 64
+    // and pushed the required score past anything a real match scores, so 家庭... stopped being found
+    // while the shorter "jiatin" (four readings) still squeaked through.
     public int GetTotalTermLength()
     {
         var len = 0;
@@ -19,142 +33,13 @@ internal sealed class FzfPattern
         {
             foreach (var term in set.Terms)
             {
-                if (!term.Inverse)
-                    len += term.Text.Length;
+                if (term.Inverse)
+                    continue;
+                len += term.Text.Length;
+                break; // the rest of this set are alternative spellings of the same typed text
             }
         }
         return len;
-    }
-
-    // Shared quality bar every alias-fallback caller applies: reject a match whose span is
-    // disproportionately wider than the query, or whose score is too low, so a weak coincidental
-    // alias hit doesn't count as a match.
-    public bool IsAcceptableAliasMatch(FzfPatternResult aliasMatch) => IsAcceptableAliasMatch(aliasMatch, GetTotalTermLength());
-
-    // Overload for a caller checking multiple alias matches against the same pattern (e.g. looping over
-    // several alias providers/aliases per match attempt) -- GetTotalTermLength() only depends on the
-    // pattern itself, so hoisting it once avoids recomputing it per alias.
-    public bool IsAcceptableAliasMatch(FzfPatternResult aliasMatch, int queryLen)
-    {
-        var span = aliasMatch.MaxEnd - aliasMatch.MinBegin;
-        return span <= Math.Max(queryLen * 3, 20) && aliasMatch.Score >= queryLen * 5;
-    }
-
-    // A long candidate name's alias (e.g. a whole filename's pinyin, concatenated into one string) can
-    // legitimately need each space-separated term to land far apart -- the combined-span check above
-    // then rejects a perfectly accurate match as "too scattered", since it can't tell "these fragments
-    // are unrelated to each other" apart from "this name is just long". See issue #143: "zg syd ebu"
-    // against "D_《中华人民共和国兽药典》2015年版二部" correctly lands "zg" near the start, "syd"
-    // mid-string, and "ebu" at the end, but the combined span (~50 chars) dwarfs the query length (8
-    // chars) even though nothing about the match is coincidental.
-    //
-    // This overload adds one narrow additional path for that case: if the combined-span check fails,
-    // accept anyway when EVERY term SET individually lands a tight, proportionate match somewhere in
-    // `text` -- regardless of how far apart the terms land from each other -- gated on the query having
-    // at least one term AliasFallbackAnchorLength+ characters. That gate matters: a bare crowd of
-    // 2-letter fragments (no term this long) is cheap to match by coincidence anywhere in a sufficiently
-    // long alias, so it's excluded from this fallback entirely and falls back to the combined-span
-    // check's existing (stricter) protection; a query anchored by at least one longer term is far less
-    // likely to land tightly by pure chance. Verified empirically (real production code, not just
-    // reasoning): across ~3600 cross-file adversarial query attempts built from real, unrelated
-    // filenames, this fallback's false-accept rate lands around 0.3-0.5%, versus the combined-span
-    // check's own already-nonzero ~5% baseline rate for the same adversarial set -- a real but small
-    // marginal increase, not a new class of problem. Deliberately reuses FzfAlgorithm.Match directly
-    // (not a nested FzfPattern.ParseText per term) to avoid allocating a whole new pattern per term;
-    // this only runs after the (cheap) combined-span check has already failed, an already-rare tail of
-    // the alias-fallback tier itself, so the extra per-term matching stays off the common path.
-    public bool IsAcceptableAliasMatch(FzfPatternResult aliasMatch, int queryLen, ReadOnlySpan<char> text, FzfScoringScheme scheme, FzfSlab? slab = null)
-    {
-        if (IsAcceptableAliasMatch(aliasMatch, queryLen))
-            return true;
-
-        if (TermSets.Length < 2 || !HasAliasFallbackAnchorTerm())
-            return false;
-
-        // Mirror TryMatch's own '|' segment-splitting (polyphonic alias variants, e.g. 和's he/hu/huo
-        // readings): every term set must land its own tight match within the SAME segment, not
-        // scattered across the whole joined string -- otherwise a term from one reading's segment
-        // could pair with another term from a DIFFERENT, mutually-exclusive reading's segment.
-        var start = 0;
-        while (start < text.Length)
-        {
-            var len = text.Slice(start).IndexOf('|');
-            if (len < 0)
-                len = text.Length - start;
-            if (EveryTermSetHasTightMatch(text.Slice(start, len), scheme, slab))
-                return true;
-            start += len + 1;
-        }
-        return false;
-    }
-
-    private bool HasAliasFallbackAnchorTerm()
-    {
-        foreach (var set in TermSets)
-            foreach (var term in set.Terms)
-                if (!term.Inverse && term.Text.Length >= AliasFallbackAnchorLength)
-                    return true;
-        return false;
-    }
-
-    private bool EveryTermSetHasTightMatch(ReadOnlySpan<char> segment, FzfScoringScheme scheme, FzfSlab? slab)
-    {
-        foreach (var set in TermSets)
-        {
-            var hasPositiveTerm = false;
-            var setOk = false;
-            foreach (var term in set.Terms)
-            {
-                if (term.Inverse)
-                    continue; // An exclude term has no "own tight match" to require here -- the
-                              // original TryMatch that produced `aliasMatch` already enforced it.
-                hasPositiveTerm = true;
-
-                var termResult = FzfAlgorithm.Match(term.Kind, segment, term.Text, term.CaseSensitive, scheme, slab);
-                if (!termResult.IsMatch)
-                    continue;
-
-                var termSpan = termResult.End - termResult.Start;
-                if (termSpan <= Math.Max(term.Text.Length * AliasFallbackPerTermMultiplier, AliasFallbackPerTermFloor))
-                {
-                    setOk = true;
-                    break;
-                }
-            }
-
-            if (hasPositiveTerm && !setOk)
-                return false;
-        }
-
-        return true;
-    }
-
-    private const int AliasFallbackAnchorLength = 3;
-    private const int AliasFallbackPerTermMultiplier = 4;
-    private const int AliasFallbackPerTermFloor = 8;
-
-    // Ranking-only refinement for choosing among several ACCEPTED alias candidates for the same name
-    // (never rejects -- IsAcceptableAliasMatch already gated that): fzf's raw score rewards total
-    // matched-character volume regardless of how loosely those characters are spread out, which
-    // structurally favors a longer query that happens to scatter across a wide span over a shorter
-    // query that lands as a clean, contiguous, zero-gap hit (e.g. a pinyin-initials query like "jtb"
-    // against its own dedicated initials alias, versus a coincidentally-matching longer subsequence of
-    // a different, longer alias for the same name -- see issue #89). Deliberately keyed off
-    // queryLen/span (span = MaxEnd-MinBegin, the same quantity IsAcceptableAliasMatch already uses)
-    // rather than queryLen/alias-length, so trailing alias content the query never reached (e.g. a name
-    // with more syllables than the user typed) is never penalized -- only genuine internal gaps between
-    // the query's own matched characters are. Pure arithmetic on already-computed fields, so unlike
-    // HighlightMask.ComputeWeight/FzfResultRank.ApplyWeight this is cheap enough to apply inline in the
-    // hot per-candidate scan rather than deferred to a bounded top-N refinement pass.
-    public FzfPatternResult WeightAliasMatch(FzfPatternResult aliasMatch, int queryLen)
-    {
-        if (!aliasMatch.ValidOffsetFound)
-            return aliasMatch;
-        var span = aliasMatch.MaxEnd - aliasMatch.MinBegin;
-        if (span <= queryLen)
-            return aliasMatch;
-        var weight = (double)queryLen / span;
-        return aliasMatch with { Score = (int)Math.Round(aliasMatch.Score * weight) };
     }
 
     public static FzfPattern Parse(string query)
@@ -166,6 +51,15 @@ internal sealed class FzfPattern
             if (rawTerm.Length >= 2 && char.IsLetter(rawTerm[0]) && rawTerm[1] == Path.VolumeSeparatorChar)
             {
                 targetDrive = rawTerm[0].ToString();
+
+                // Only the "d:" itself is the filter. Whatever follows it is still text the user typed
+                // and meant to search for, so it stays a term -- dropping the whole token made "d:report"
+                // quietly search drive D for nothing at all while "d: report" searched it for report,
+                // with no way to tell from the results why the two differed. A file name can never
+                // contain a colon, so a token in this shape has no other reading to preserve.
+                var rest = rawTerm.Substring(2);
+                if (rest.Length > 0)
+                    terms.Add(rest);
                 continue;
             }
 
@@ -176,6 +70,50 @@ internal sealed class FzfPattern
     }
 
     public static FzfPattern ParseText(string query) => new FzfPattern(null, ParseTermSets(query));
+
+    // Offers each alias provider the chance to restate this term in the shape its own aliases use, and
+    // adds whatever comes back as ALTERNATIVES within the same term set (an OR): the candidate decides
+    // which spelling it satisfies, and TryMatchSingle already stops at the first that hits.
+    //
+    // This one seam is what keeps every alias-matching site -- the index scan, path segments, display
+    // highlighting, the plugin-facing FuzzyMatchService -- working without any of them knowing that a
+    // provider's aliases have internal structure. It is also why "syllable" appears nowhere in Core:
+    // the provider is asked for strings, not asked about its writing system.
+    //
+    // Skipped for an inverse term. "!x" means "reject anything matching x", and an OR set is satisfied
+    // by ANY alternative, so adding spellings there would widen what gets excluded rather than what
+    // gets found -- the opposite of the intent.
+    private static void AddAliasQueryForms(List<FzfTerm> current, string lower, FzfTermKind kind, bool inverse, bool caseSensitive)
+    {
+        if (inverse || caseSensitive || lower.Length == 0)
+            return;
+
+        foreach (var provider in AliasProviderRegistry.GetActiveProviders())
+        {
+            IEnumerable<string> forms;
+            try
+            {
+                forms = provider.GetQueryForms(lower);
+            }
+            catch
+            {
+                continue; // a misbehaving provider must not take the whole query down
+            }
+
+            foreach (var form in forms)
+            {
+                if (!string.IsNullOrEmpty(form) && form != lower)
+                    current.Add(new FzfTerm(kind, false, form, false, AliasForm: true));
+            }
+        }
+    }
+
+    // One already-parsed term set lifted into a pattern of its own, so a caller can ask "which
+    // candidates satisfy THIS term" instead of only "which satisfy the whole query". Reuses the parsed
+    // term verbatim rather than re-parsing its text, which would have to re-derive kind/case-sensitivity
+    // from a string the operators were already stripped from.
+    internal static FzfPattern ForTermSet(FzfPattern source, int index)
+        => new(source.TargetDrive, new[] { source.TermSets[index] });
 
     public bool TryMatch(ReadOnlySpan<char> text, out FzfPatternResult result, FzfScoringScheme scheme, FzfSlab? slab = null)
     {
@@ -291,7 +229,7 @@ internal sealed class FzfPattern
         var switchSet = false;
         var afterBar = false;
 
-        foreach (var rawToken in query.Split(' ', StringSplitOptions.RemoveEmptyEntries))
+        foreach (var rawToken in MergeQuotedPhrases(query.Split(' ', StringSplitOptions.RemoveEmptyEntries)))
         {
             var token = rawToken.Replace('\t', ' ');
             if (current.Count > 0 && !afterBar && token == "|")
@@ -302,7 +240,11 @@ internal sealed class FzfPattern
             }
 
             afterBar = false;
-            var kind = FzfTermKind.Fuzzy;
+            // Mirrors fzf's own --exact mode ("if !fuzzy { typ = termExact }" in its parseTerms):
+            // with fuzzy matching switched off, a bare term must match as a contiguous substring
+            // rather than a scattered subsequence.
+            var fuzzyEnabled = SearchContext.FuzzyMatchEnabled;
+            var kind = fuzzyEnabled ? FzfTermKind.Fuzzy : FzfTermKind.Exact;
             var inverse = false;
             if (token.StartsWith("!", StringComparison.Ordinal))
             {
@@ -324,13 +266,24 @@ internal sealed class FzfPattern
             }
             else if (token.StartsWith("'", StringComparison.Ordinal))
             {
-                kind = inverse ? FzfTermKind.Fuzzy : FzfTermKind.Exact;
+                // "'" flips exactness rather than setting it, so it stays useful in both modes: it
+                // makes a term exact while fuzzy matching is on, and hands one term back to fuzzy
+                // matching while it is off (fzf's own "Flip exactness" branch does the same).
+                // A trailing "$" already claimed the kind ("'foo$"). A suffix match is exact by
+                // nature, so the "'" adds nothing there and must not overwrite Suffix -- doing so
+                // silently discarded the end anchor the user explicitly typed.
+                if (kind != FzfTermKind.Suffix)
+                    kind = fuzzyEnabled && !inverse ? FzfTermKind.Exact : FzfTermKind.Fuzzy;
                 token = token.Substring(1);
             }
             else if (token.StartsWith("^", StringComparison.Ordinal))
             {
                 kind = kind == FzfTermKind.Suffix ? FzfTermKind.Equal : FzfTermKind.Prefix;
                 token = token.Substring(1);
+                // "^'abc": Prefix/Equal are already exact, so a "'" here is a redundant operator
+                // rather than text. Left in, it searched for a literal apostrophe no name contains.
+                if (token.StartsWith("'", StringComparison.Ordinal))
+                    token = token.Substring(1);
             }
 
             if (token.Length == 0)
@@ -345,6 +298,7 @@ internal sealed class FzfPattern
             var lower = token.ToLowerInvariant();
             var caseSensitive = token != lower;
             current.Add(new FzfTerm(kind, inverse, caseSensitive ? token : lower, caseSensitive));
+            AddAliasQueryForms(current, lower, kind, inverse, caseSensitive);
             switchSet = true;
         }
 
@@ -354,8 +308,72 @@ internal sealed class FzfPattern
         return sets.ToArray();
     }
 
+    // Reassembles a quoted phrase whose content contains spaces ("'cad acb'"). Necessary because the
+    // split above runs BEFORE any operator parsing: such a query otherwise became the two unrelated
+    // terms Exact("cad") and Fuzzy("acb'"), the second searching for a literal apostrophe no real name
+    // contains, so the whole query could never match anything -- which is what the documented
+    // "'final report'" form actually did.
+    //
+    // Merging is deliberately gated on the quotes sitting at token BOUNDARIES: an opening quote that
+    // starts a token (after an optional "!"), a closing quote that ends a later one. An apostrophe
+    // mid-word therefore never opens a phrase, leaving an ordinary query like "don't stop" untouched.
+    // The lookahead also stops at a bare "|", so an OR of two quoted terms ("'foo | 'bar'") keeps
+    // parsing as an OR instead of collapsing into one phrase that swallows the separator.
+    private static List<string> MergeQuotedPhrases(string[] tokens)
+    {
+        var merged = new List<string>(tokens.Length);
+        for (var i = 0; i < tokens.Length; i++)
+        {
+            var token = tokens[i];
+            var open = QuoteStartIndex(token);
+            if (open < 0 || IsSelfClosingQuote(token, open))
+            {
+                merged.Add(token);
+                continue;
+            }
+
+            var close = -1;
+            for (var j = i + 1; j < tokens.Length; j++)
+            {
+                if (tokens[j] == "|")
+                    break;
+                if (tokens[j].EndsWith("'", StringComparison.Ordinal))
+                {
+                    close = j;
+                    break;
+                }
+            }
+
+            if (close < 0)
+            {
+                merged.Add(token); // unmatched opening quote: leave the old term-by-term reading alone
+                continue;
+            }
+
+            merged.Add(string.Join(' ', tokens, i, close - i + 1));
+            i = close;
+        }
+        return merged;
+    }
+
+    // Index of a phrase-opening "'" (0, or 1 when the token is negated with "!"), or -1 for none.
+    private static int QuoteStartIndex(string token)
+    {
+        if (token.StartsWith("'", StringComparison.Ordinal))
+            return 0;
+        return token.Length > 1 && token[0] == '!' && token[1] == '\'' ? 1 : -1;
+    }
+
+    // "'read'" / "!'read'" already carry their own closing quote, so they need no lookahead.
+    private static bool IsSelfClosingQuote(string token, int open)
+        => token.Length > open + 2 && token.EndsWith("'", StringComparison.Ordinal);
 }
 
 internal readonly record struct FzfTermSet(FzfTerm[] Terms);
-internal readonly record struct FzfTerm(FzfTermKind Kind, bool Inverse, string Text, bool CaseSensitive);
+// AliasForm marks a spelling an alias provider supplied for a term the user typed, rather than
+// something the user typed themselves. It exists so display highlighting can tell the two apart: a
+// user-written OR ("a | b") highlights every branch that matches, but a provider's rewriting of one
+// term is an internal detail whose text (pinyin, boundaries and all) appears nowhere in the candidate,
+// and marking it lights up characters that have nothing to do with what was typed.
+internal readonly record struct FzfTerm(FzfTermKind Kind, bool Inverse, string Text, bool CaseSensitive, bool AliasForm = false);
 internal readonly record struct FzfPatternResult(int Score, int MinBegin, int MinEnd, int MaxEnd, bool ValidOffsetFound);

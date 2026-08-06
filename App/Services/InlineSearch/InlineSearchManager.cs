@@ -146,13 +146,26 @@ public class InlineSearchManager : IDisposable
 
     private void EnsureWindowCreated()
     {
+        // As early as possible, before Show() -- see PowerThrottlingHelper's own comment. Idempotent, so
+        // it's harmless to call this even on the (common) already-created short-circuit below.
+        PowerThrottlingHelper.WindowShowing("inline");
+
         if (_window != null) return;
 
         var viewModel = new QuickSearchViewModel();
         var scope = _explorerTracker.ActivePath;
-        if (string.IsNullOrEmpty(scope) && _explorerTracker.ActiveInlineAdapter != null && _explorerTracker.ActiveHwnd != IntPtr.Zero)
+        if (string.IsNullOrEmpty(scope) && _explorerTracker.ActiveHwnd != IntPtr.Zero)
         {
-            scope = _explorerTracker.ActiveInlineAdapter.GetSearchScope(_explorerTracker.ActiveHwnd);
+            // ActiveInlineAdapter is always null for a plain IFileDialogAdapter host (WinRAR's Extract
+            // dialog, Explorer's classic/folder-browser dialogs, ...) -- only ActiveAdapter applies there.
+            // Falling back to ActivePath's own poller cycle alone meant SearchScope stayed empty for
+            // every window recreated between polls (the window gets torn down and rebuilt on every
+            // SetInlineSearchVisible toggle), which in turn broke ExplorerJumpSuggestionHelper's own
+            // "already scoped here, don't suggest jumping" check for the entire gap.
+            if (_explorerTracker.ActiveInlineAdapter != null)
+                scope = _explorerTracker.ActiveInlineAdapter.GetSearchScope(_explorerTracker.ActiveHwnd);
+            else if (_explorerTracker.ActiveAdapter != null)
+                scope = _explorerTracker.ActiveAdapter.GetCurrentPath(_explorerTracker.ActiveHwnd);
         }
         viewModel.SearchScope = scope;
         viewModel.IsInlineSearchContext = true;
@@ -160,6 +173,9 @@ public class InlineSearchManager : IDisposable
         _window = new InlineSearchWindow(viewModel, this);
         _currentHostHwnd = _explorerTracker.ActiveHwnd;
         _keyboardHook.IsInlineSearchVisible = true;
+        // Set alongside it here but, unlike it, not cleared when the window takes focus below: this one
+        // tracks the window being on screen, which both of those paths leave true.
+        _keyboardHook.IsInlineWindowOnScreen = true;
         _mouseHook.Start();
 
         // Force the native HWND into existence now (still invisible -- EnsureHandle doesn't set
@@ -256,7 +272,7 @@ public class InlineSearchManager : IDisposable
     {
         if (_window == null) return;
 
-        var dragActive = SwiftList.App.Views.Controls.Results.ResultsDragDropHelper.IsDragActive;
+        var dragActive = Views.Controls.Results.ResultsDragDropHelper.IsDragActive;
         var pendingMouseDown = _window.HasPendingMouseDown;
 
         if (dragActive || pendingMouseDown)
@@ -292,6 +308,7 @@ public class InlineSearchManager : IDisposable
 
         _mouseHook.Stop();
         _keyboardHook.IsInlineSearchVisible = false;
+        _keyboardHook.IsInlineWindowOnScreen = false;
         _keyboardHook.Start();
         _searchText = string.Empty;
 
@@ -301,6 +318,7 @@ public class InlineSearchManager : IDisposable
         win.ViewModel.Monitor.StopStatusTimer();
         win.Hide();
         win.Close();
+        PowerThrottlingHelper.WindowHidden("inline");
 
         // Inline search closes whenever you leave Explorer; release the icon cache and trim the working
         // set each time, matching QuickSearch's hide behavior, so inline-only users reclaim memory too.

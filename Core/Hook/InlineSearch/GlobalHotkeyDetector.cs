@@ -7,6 +7,7 @@ public sealed class GlobalHotkeyDetector
 
     private readonly ModifierDoubleTapDetector _toggleWindowTapDetector = new();
     private readonly ModifierDoubleTapDetector _quickSwitchTapDetector = new();
+    private readonly WindowsKeyState _windowsKeyState = new();
 
     public GlobalHotkeyDetector(UserSettings settings, ExplorerTracker explorerTracker)
     {
@@ -14,9 +15,19 @@ public sealed class GlobalHotkeyDetector
         _explorerTracker = explorerTracker;
     }
 
+    public void OnKeyDown(int vkCode) => _windowsKeyState.OnKeyDown(vkCode);
+
+    // Exposed so KeyboardHookServiceInlineSearchExtensions.HandleInlineSearchTriggerKey can pass the
+    // same tracked state into CheckModifiersMatchOnly (SelectJumpModifier) that CheckToggleWindowHotkey/
+    // CheckAndHandleQuickSwitch already pass into CheckModifiersMatch above -- otherwise "jump to result
+    // N" configured with Win as its modifier would still be exposed to the exact GetKeyState-inside-a-
+    // low-level-hook staleness CheckModifiersMatch's own trackedWindowsKeyDown parameter exists to fix.
+    public bool IsWindowsKeyDown => _windowsKeyState.IsDown;
+
     /// <summary>Call on WM_KEYUP / WM_SYSKEYUP to reset the "was released" flags.</summary>
     public void OnKeyUp(int vkCode)
     {
+        _windowsKeyState.OnKeyUp(vkCode);
         if (HotkeyStringFormat.IsBareModifier(_settings.Hotkeys.ToggleWindowHotkey, out var toggleModifier) &&
             KeyboardUtils.IsModifierKey(vkCode, toggleModifier))
         {
@@ -51,7 +62,7 @@ public sealed class GlobalHotkeyDetector
             var targetVk = KeyboardUtils.GetKeyVirtualCode(key);
             if (targetVk != 0 && vkCode == targetVk)
             {
-                if (KeyboardUtils.CheckModifiersMatch(modifier))
+                if (KeyboardUtils.CheckModifiersMatch(modifier, _windowsKeyState.IsDown))
                 {
                     triggered = true;
                     consumeKey = true;
@@ -64,6 +75,25 @@ public sealed class GlobalHotkeyDetector
             onDoubleCtrl?.Invoke();
         }
         return triggered;
+    }
+
+    /// <summary>The quick panel's own global combo. A plain combination, with no bare-modifier form.</summary>
+    /// <remarks>
+    /// The tap detectors the other two hotkeys carry exist because those can be configured as a bare
+    /// modifier, which needs double-tap timing to tell apart from the same modifier being held down for
+    /// something else. This one is always a real key, so there is nothing to disambiguate.
+    /// </remarks>
+    public bool CheckQuickPanelHotkey(int vkCode, out bool consumeKey)
+    {
+        consumeKey = false;
+
+        HotkeyStringFormat.ParseCombo(_settings.Hotkeys.QuickPanelHotkey, out var modifier, out var key);
+        var targetVk = KeyboardUtils.GetKeyVirtualCode(key);
+        if (targetVk == 0 || vkCode != targetVk) return false;
+        if (!KeyboardUtils.CheckModifiersMatch(modifier, _windowsKeyState.IsDown)) return false;
+
+        consumeKey = true;
+        return true;
     }
 
     public bool CheckAndHandleQuickSwitch(int vkCode, uint time, out bool consumeKey)
@@ -87,7 +117,7 @@ public sealed class GlobalHotkeyDetector
             var targetVk = KeyboardUtils.GetKeyVirtualCode(key);
             if (targetVk != 0 && vkCode == targetVk)
             {
-                if (KeyboardUtils.CheckModifiersMatch(modifier))
+                if (KeyboardUtils.CheckModifiersMatch(modifier, _windowsKeyState.IsDown))
                 {
                     triggered = true;
                 }

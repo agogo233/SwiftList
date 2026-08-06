@@ -19,7 +19,12 @@ public class GeneralSettingsViewModel : ViewModelBase
     private bool _autoCheckUpdates;
     private bool _autoSilentUpdate;
     private bool _enableHardwareAcceleration;
+    private bool _enableFuzzyMatch;
     private bool _hideTrayIcon;
+    private bool _defaultFileManagerEnabled;
+    private string _defaultFileManagerPath;
+    private string _defaultFileManagerParameter;
+    private string _globalTokenPrefix;
 
     // Tab navigation for the System/Layout/Preview Window split of this page.
     private string _selectedTab = "System";
@@ -43,12 +48,19 @@ public class GeneralSettingsViewModel : ViewModelBase
         SidebarGroupOrder = new SidebarGroupOrderViewModel(userSettings);
         ColumnOrder = new ColumnOrderViewModel(userSettings);
         ActionMenuGroupOrder = new ActionMenuGroupOrderViewModel(userSettings);
+        FilePreviewProviderOrder = new FilePreviewProviderOrderViewModel(userSettings);
+        ThumbnailProviderOrder = new ThumbnailProviderOrderViewModel(userSettings);
 
         _startWithWindows = userSettings.StartWithWindows;
         _autoCheckUpdates = userSettings.AutoCheckUpdates;
         _autoSilentUpdate = userSettings.AutoSilentUpdate;
         _enableHardwareAcceleration = userSettings.EnableHardwareAcceleration;
+        _enableFuzzyMatch = userSettings.EnableFuzzyMatch;
         _hideTrayIcon = userSettings.HideTrayIcon;
+        _defaultFileManagerEnabled = userSettings.DefaultFileManager.Enabled;
+        _defaultFileManagerPath = userSettings.DefaultFileManager.Path;
+        _defaultFileManagerParameter = userSettings.DefaultFileManager.Parameter;
+        _globalTokenPrefix = userSettings.GlobalTokenPrefix;
 
         _selectedLogLevel = LogLevelOptions.FirstOrDefault(o => o.Value == SettingsOptionGenerator.NormalizeLogLevel(_userSettings.LogLevel))
                             ?? LogLevelOptions[2]; // Default to Info
@@ -143,10 +155,59 @@ public class GeneralSettingsViewModel : ViewModelBase
         set => SetProperty(ref _enableHardwareAcceleration, value);
     }
 
+    // Off narrows every bare query term from a subsequence match to a contiguous substring one, so
+    // "abc" stops matching "a-b-c". Applies to the search itself, not just the ordering.
+    public bool EnableFuzzyMatch
+    {
+        get => _enableFuzzyMatch;
+        set => SetProperty(ref _enableFuzzyMatch, value);
+    }
+
     public bool HideTrayIcon
     {
         get => _hideTrayIcon;
         set => SetProperty(ref _hideTrayIcon, value);
+    }
+
+    public string GlobalTokenPrefix
+    {
+        get => _globalTokenPrefix;
+        set
+        {
+            var val = value ?? ":";
+            if (val.Length > 1) val = val[..1];
+            SetProperty(ref _globalTokenPrefix, val);
+        }
+    }
+
+    // See GitHub issue #180 -- redirects "open a folder" (and "open containing folder") to a
+    // user-configured third-party file manager instead of the shell's own association.
+    public bool DefaultFileManagerEnabled
+    {
+        get => _defaultFileManagerEnabled;
+        set => SetProperty(ref _defaultFileManagerEnabled, value);
+    }
+
+    public string DefaultFileManagerPath
+    {
+        get => _defaultFileManagerPath;
+        set => SetProperty(ref _defaultFileManagerPath, value);
+    }
+
+    public string DefaultFileManagerParameter
+    {
+        get => _defaultFileManagerParameter;
+        set => SetProperty(ref _defaultFileManagerParameter, value);
+    }
+
+    private ICommand? _browseDefaultFileManagerPathCommand;
+    public ICommand BrowseDefaultFileManagerPathCommand => _browseDefaultFileManagerPathCommand ??= new RelayCommand(BrowseDefaultFileManagerPath);
+
+    private void BrowseDefaultFileManagerPath()
+    {
+        var dialog = new Microsoft.Win32.OpenFileDialog { Filter = $"{TranslationManager.Instance["General_DefaultFileManagerBrowseFilter"]}|*.exe" };
+        if (dialog.ShowDialog() == true)
+            DefaultFileManagerPath = dialog.FileName;
     }
 
     public string LogLevel => SettingsOptionGenerator.NormalizeLogLevel(_selectedLogLevel?.Value ?? _userSettings.LogLevel);
@@ -180,8 +241,16 @@ public class GeneralSettingsViewModel : ViewModelBase
         if (IsUserAdmin)
             _userSettings.AutoSilentUpdate = _autoSilentUpdate;
         _userSettings.EnableHardwareAcceleration = _enableHardwareAcceleration;
+        _userSettings.EnableFuzzyMatch = _enableFuzzyMatch;
+        // Push it straight into the process-wide default too, so toggling this takes effect for the
+        // plugin catalog, favorites and highlighting immediately rather than only after a restart.
+        SearchContext.DefaultFuzzyMatchEnabled = _enableFuzzyMatch;
         _userSettings.HideTrayIcon = _hideTrayIcon;
+        _userSettings.GlobalTokenPrefix = string.IsNullOrWhiteSpace(_globalTokenPrefix) ? ":" : _globalTokenPrefix;
         _userSettings.LogLevel = LogLevel;
+        _userSettings.DefaultFileManager.Enabled = _defaultFileManagerEnabled;
+        _userSettings.DefaultFileManager.Path = _defaultFileManagerPath;
+        _userSettings.DefaultFileManager.Parameter = _defaultFileManagerParameter;
 
         StartupManager.SetEnabled(StartWithWindows);
         (System.Windows.Application.Current.MainWindow as QuickSearchWindow)?.ApplyTrayIconVisibility(_hideTrayIcon);
@@ -200,6 +269,8 @@ public class GeneralSettingsViewModel : ViewModelBase
         SidebarGroupOrder.Save();
         ColumnOrder.Save();
         ActionMenuGroupOrder.Save();
+        FilePreviewProviderOrder.Save();
+        ThumbnailProviderOrder.Save();
 
         _userSettings.Save();
     }
@@ -212,4 +283,6 @@ public class GeneralSettingsViewModel : ViewModelBase
     public SidebarGroupOrderViewModel SidebarGroupOrder { get; }
     public ColumnOrderViewModel ColumnOrder { get; }
     public ActionMenuGroupOrderViewModel ActionMenuGroupOrder { get; }
+    public FilePreviewProviderOrderViewModel FilePreviewProviderOrder { get; }
+    public ThumbnailProviderOrderViewModel ThumbnailProviderOrder { get; }
 }
