@@ -43,6 +43,7 @@ static void OnExplorerChanged(const ExplorerInfo& info) {
 }
 
 int wmain(int argc, wchar_t* argv[]) {
+    (void)argc; (void)argv;
     HRESULT hr = CoInitializeEx(nullptr, COINIT_APARTMENTTHREADED);
     if (FAILED(hr)) return 1;
 

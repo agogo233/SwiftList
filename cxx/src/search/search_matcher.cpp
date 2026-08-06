@@ -91,12 +91,12 @@ std::vector<UniqueMatch> SearchMatcher::SearchTerm(const FzfTerm& term, int maxR
             if (static_cast<int>(heap.size()) < maxResults) {
                 heap.push_back(sm);
                 if (static_cast<int>(heap.size()) == maxResults) {
-                    std::make_heap(heap.begin(), heap.end(), std::greater<>());
+                    std::make_heap(heap.begin(), heap.end(), std::greater<ScoredMatch>());
                 }
             } else if (sm.Score < heap.front().Score) {
-                std::pop_heap(heap.begin(), heap.end(), std::greater<>());
+                std::pop_heap(heap.begin(), heap.end(), std::greater<ScoredMatch>());
                 heap.back() = sm;
-                std::push_heap(heap.begin(), heap.end(), std::greater<>());
+                std::push_heap(heap.begin(), heap.end(), std::greater<ScoredMatch>());
             }
         }
     }

@@ -21,7 +21,7 @@ void FzfMatcher::ComputeBonuses(std::span<const uint8_t> chars, std::span<int8_t
 // --- V2 DP matching ---
 
 FzfMatchResult FzfMatcher::MatchV2(std::span<const uint8_t> chars,
-                                    std::span<const int8_t> bonuses,
+                                    std::span<int8_t> bonuses,
                                     std::string_view pattern) {
     FzfMatchResult result;
     int n = static_cast<int>(chars.size());
@@ -173,7 +173,7 @@ FzfMatchResult FzfMatcher::MatchV2(std::span<const uint8_t> chars,
 // --- V1 greedy matching (fallback) ---
 
 FzfMatchResult FzfMatcher::MatchV1(std::span<const uint8_t> chars,
-                                    std::span<const int8_t> bonuses,
+                                    std::span<int8_t> bonuses,
                                     std::string_view pattern) {
     FzfMatchResult result;
     int n = static_cast<int>(chars.size());
@@ -268,7 +268,7 @@ FzfMatchResult FzfMatcher::Match(std::string_view text, std::string_view pattern
 }
 
 FzfMatchResult FzfMatcher::MatchWithBonuses(std::span<const uint8_t> chars,
-                                             std::span<const int8_t> bonuses,
+                                              std::span<int8_t> bonuses,
                                              std::string_view pattern) {
     if (pattern.empty()) {
         return {true, 0, 0, 0};
