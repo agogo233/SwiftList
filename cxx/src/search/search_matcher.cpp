@@ -41,6 +41,7 @@ std::vector<UniqueMatch> SearchMatcher::SearchTerm(const FzfTerm& term, int maxR
         int End;
 
         bool operator<(const ScoredMatch& other) const { return Score < other.Score; }
+        bool operator>(const ScoredMatch& other) const { return Score > other.Score; }
         bool operator>=(const ScoredMatch& other) const { return Score >= other.Score; }
     };
 
