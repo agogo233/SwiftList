@@ -16,9 +16,9 @@ constexpr uint32_t kResponseMagic = 0x52504C53;  // SLPR
 constexpr uint32_t kSearchResMagic = 0x53524C53;  // SLRS
 constexpr uint32_t kIpcMagic = 0x43504953;        // SIPC (IPC control channel)
 
-constexpr int kRequestVersion = 4;
-constexpr int kResponseVersion = 4;
-constexpr int kSearchResVersion = 4;
+constexpr int kRequestVersion = 6;
+constexpr int kResponseVersion = 6;
+constexpr int kSearchResVersion = 6;
 constexpr int kIpcVersion = 2;
 constexpr int kStringVersion = 1;
 

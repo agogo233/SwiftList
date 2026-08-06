@@ -26,6 +26,9 @@ enum class SearchRequestId : uint8_t {
     GetRecentFiles = 13,
     ClearPathCaches = 14,
     LaunchHook = 15,
+    CancelDriveIndex = 16,
+    EnumerateDir = 17,
+    SubscribeDirectoryChanges = 18,
 };
 
 struct MachineSettings {
@@ -45,6 +48,8 @@ struct SearchRequestMessage {
     std::unique_ptr<std::vector<std::string>> Directories;
     int32_t MaxAgeMinutes = 0;
     bool RequestElevation = false;
+    bool ExactMatch = false;
+    bool Recursive = false;
 };
 
 void WriteSearchRequest(std::vector<uint8_t>& buf,

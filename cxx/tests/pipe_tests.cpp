@@ -118,6 +118,7 @@ TEST(SearchRequestWireTest, SearchRoundTrip) {
     original.Limit = 50;
     original.AppLimit = 10;
     original.Query = "test query";
+    original.ExactMatch = true;
     std::vector<std::string> disabled = {"comp1", "comp2"};
     original.DisabledAliasComponents = std::make_unique<std::vector<std::string>>(disabled);
 
@@ -126,6 +127,7 @@ TEST(SearchRequestWireTest, SearchRoundTrip) {
 
     size_t off = 0;
     off += 4; // magic
+    EXPECT_EQ(ReadInt32LE(std::span<const uint8_t>(buf.data() + off, 4)), kRequestVersion);
     off += 4; // version
     auto payloadLen = ReadInt32LE(std::span<const uint8_t>(buf.data() + off, 4));
     off += 4;
@@ -136,6 +138,7 @@ TEST(SearchRequestWireTest, SearchRoundTrip) {
     EXPECT_EQ(decoded.Limit, 50);
     EXPECT_EQ(decoded.AppLimit, 10);
     EXPECT_EQ(decoded.Query, "test query");
+    EXPECT_TRUE(decoded.ExactMatch);
     ASSERT_NE(decoded.DisabledAliasComponents, nullptr);
     ASSERT_EQ(decoded.DisabledAliasComponents->size(), 2);
     EXPECT_EQ((*decoded.DisabledAliasComponents)[0], "comp1");
@@ -149,12 +152,15 @@ TEST(SearchRequestWireTest, SearchDirRoundTrip) {
     original.AppLimit = 20;
     original.DirectoryFilter = "C:\\Windows";
     original.Query = "file.txt";
+    original.ExactMatch = false;
 
     std::vector<uint8_t> buf;
     WriteSearchRequest(buf, original);
 
     size_t off = 0;
-    off += 8;
+    off += 4;
+    EXPECT_EQ(ReadInt32LE(std::span<const uint8_t>(buf.data() + off, 4)), kRequestVersion);
+    off += 4;
     auto payloadLen = ReadInt32LE(std::span<const uint8_t>(buf.data() + off, 4));
     off += 4;
 
@@ -164,6 +170,7 @@ TEST(SearchRequestWireTest, SearchDirRoundTrip) {
     EXPECT_EQ(decoded.Limit, 100);
     EXPECT_EQ(decoded.DirectoryFilter, "C:\\Windows");
     EXPECT_EQ(decoded.Query, "file.txt");
+    EXPECT_FALSE(decoded.ExactMatch);
 }
 
 TEST(SearchRequestWireTest, LaunchHookRoundTrip) {
@@ -185,6 +192,75 @@ TEST(SearchRequestWireTest, LaunchHookRoundTrip) {
     EXPECT_TRUE(decoded.RequestElevation);
 }
 
+TEST(SearchRequestWireTest, EnumerateDirRoundTrip) {
+    SearchRequestMessage original;
+    original.Id = SearchRequestId::EnumerateDir;
+    original.Limit = 50;
+    original.DirectoryFilter = "C:\\Users";
+    original.Query = "*.txt";
+    original.Recursive = true;
+
+    std::vector<uint8_t> buf;
+    WriteSearchRequest(buf, original);
+
+    size_t off = 0;
+    off += 4;
+    EXPECT_EQ(ReadInt32LE(std::span<const uint8_t>(buf.data() + off, 4)), kRequestVersion);
+    off += 4;
+    auto payloadLen = ReadInt32LE(std::span<const uint8_t>(buf.data() + off, 4));
+    off += 4;
+
+    SearchRequestMessage decoded;
+    EXPECT_TRUE(ReadSearchRequest(buf.data() + off, payloadLen, decoded));
+    EXPECT_EQ(decoded.Id, SearchRequestId::EnumerateDir);
+    EXPECT_EQ(decoded.Limit, 50);
+    EXPECT_EQ(decoded.DirectoryFilter, "C:\\Users");
+    EXPECT_EQ(decoded.Query, "*.txt");
+    EXPECT_TRUE(decoded.Recursive);
+}
+
+TEST(SearchRequestWireTest, CancelDriveIndexRoundTrip) {
+    SearchRequestMessage original;
+    original.Id = SearchRequestId::CancelDriveIndex;
+    original.Drive = "D:";
+
+    std::vector<uint8_t> buf;
+    WriteSearchRequest(buf, original);
+
+    size_t off = 0;
+    off += 8;
+    auto payloadLen = ReadInt32LE(std::span<const uint8_t>(buf.data() + off, 4));
+    off += 4;
+
+    SearchRequestMessage decoded;
+    EXPECT_TRUE(ReadSearchRequest(buf.data() + off, payloadLen, decoded));
+    EXPECT_EQ(decoded.Id, SearchRequestId::CancelDriveIndex);
+    EXPECT_EQ(decoded.Drive, "D:");
+}
+
+TEST(SearchRequestWireTest, SubscribeDirectoryChangesRoundTrip) {
+    SearchRequestMessage original;
+    original.Id = SearchRequestId::SubscribeDirectoryChanges;
+    std::vector<std::string> dirs = {"C:\\Users", "D:\\Data"};
+    original.Directories = std::make_unique<std::vector<std::string>>(dirs);
+
+    std::vector<uint8_t> buf;
+    WriteSearchRequest(buf, original);
+
+    size_t off = 0;
+    off += 8;
+    auto payloadLen = ReadInt32LE(std::span<const uint8_t>(buf.data() + off, 4));
+    off += 4;
+
+    SearchRequestMessage decoded;
+    EXPECT_TRUE(ReadSearchRequest(buf.data() + off, payloadLen, decoded));
+    EXPECT_EQ(decoded.Id, SearchRequestId::SubscribeDirectoryChanges);
+    ASSERT_NE(decoded.Directories, nullptr);
+    ASSERT_EQ(decoded.Directories->size(), 2);
+    EXPECT_EQ((*decoded.Directories)[0], "C:\\Users");
+    EXPECT_EQ((*decoded.Directories)[1], "D:\\Data");
+}
+
 // --- SearchResponse round trip ---
 
 TEST(SearchResponseWireTest, WriteAndReadStream) {
@@ -201,6 +277,7 @@ TEST(SearchResponseWireTest, WriteAndReadStream) {
     r1.Metadata.CreatedUnix = 1609459200;
     r1.Metadata.ModifiedUnix = 1609459300;
     r1.Metadata.AccessedUnix = 1609459400;
+    r1.Attributes = 32; // FILE_ATTRIBUTE_ARCHIVE
     WriteSearchResponseFileResult(buf, r1);
 
     SearchResult r2;
@@ -210,6 +287,7 @@ TEST(SearchResponseWireTest, WriteAndReadStream) {
     r2.Drive = "C:";
     r2.RankSortKey = 12346;
     r2.Metadata = {0, 0, 0, 0};
+    r2.Attributes = 16; // FILE_ATTRIBUTE_DIRECTORY
     WriteSearchResponseFileResult(buf, r2);
 
     WriteSearchResponseEnd(buf);
@@ -229,7 +307,9 @@ TEST(SearchResponseWireTest, WriteAndReadStream) {
     EXPECT_EQ(results[0].RankSortKey, 12345);
     EXPECT_EQ(results[0].Metadata.Size, 1024);
     EXPECT_EQ(results[0].Metadata.CreatedUnix, 1609459200);
+    EXPECT_EQ(results[0].Attributes, 32);
 
     EXPECT_EQ(results[1].Name, "dir1");
     EXPECT_TRUE(results[1].IsDir);
+    EXPECT_EQ(results[1].Attributes, 16);
 }

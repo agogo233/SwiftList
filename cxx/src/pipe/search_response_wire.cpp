@@ -21,7 +21,7 @@ void WriteSearchResponseFileResult(std::vector<uint8_t>& buf,
                       Max7BitLen(pathLen) + pathLen +
                       1 +
                       Max7BitLen(driveLen) + driveLen +
-                      8 + 8 + 4 + 4 + 4;
+                      8 + 8 + 4 + 4 + 4 + 4;
 
     auto totalFrameSize = 9 + payloadLen;
     auto off = buf.size();
@@ -61,6 +61,9 @@ void WriteSearchResponseFileResult(std::vector<uint8_t>& buf,
     WriteUInt32LE(std::span<uint8_t>(buf.data() + offset, 4), result.Metadata.AccessedUnix);
     offset += 4;
 
+    WriteUInt32LE(std::span<uint8_t>(buf.data() + offset, 4), result.Attributes);
+    offset += 4;
+
     auto actualPayloadSize = static_cast<int32_t>(offset - payloadStart);
     WriteInt32LE(std::span<uint8_t>(buf.data() + off + 5, 4), actualPayloadSize);
 
@@ -72,6 +75,14 @@ void WriteSearchResponseEnd(std::vector<uint8_t>& buf) {
     buf.resize(off + 9);
     WriteInt32LE(std::span<uint8_t>(buf.data() + off, 4), kSearchResMagic);
     buf[off + 4] = kEndFrame;
+    WriteInt32LE(std::span<uint8_t>(buf.data() + off + 5, 4), 0);
+}
+
+void WriteSearchResponseNotIndexed(std::vector<uint8_t>& buf) {
+    auto off = buf.size();
+    buf.resize(off + 9);
+    WriteInt32LE(std::span<uint8_t>(buf.data() + off, 4), kSearchResMagic);
+    buf[off + 4] = kNotIndexedFrame;
     WriteInt32LE(std::span<uint8_t>(buf.data() + off + 5, 4), 0);
 }
 
@@ -121,7 +132,16 @@ bool ReadSearchResponseStream(
             result.Metadata.CreatedUnix = ReadUInt32LE(payload.subspan(poff));
             result.Metadata.ModifiedUnix = ReadUInt32LE(payload.subspan(poff + 4));
             result.Metadata.AccessedUnix = ReadUInt32LE(payload.subspan(poff + 8));
+            poff += 12;
+            if (poff + 4 <= payloadLen) {
+                result.Attributes = ReadUInt32LE(payload.subspan(poff));
+            }
             onResult(result);
+        }
+
+        if (frameType == kNotIndexedFrame) {
+            offset += payloadLen;
+            continue;
         }
 
         offset += payloadLen;

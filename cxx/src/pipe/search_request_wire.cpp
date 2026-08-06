@@ -22,7 +22,9 @@ static std::vector<std::string> ReadStringList(const uint8_t* payload,
     result.reserve(count);
     for (int i = 0; i < count; ++i) {
         if (offset >= end) break;
-        result.push_back(ReadString(std::span<const uint8_t>(payload + offset, end - offset), offset));
+        size_t so = 0;
+        result.push_back(ReadString(std::span<const uint8_t>(payload + offset, end - offset), so));
+        offset += so;
     }
     return result;
 }
@@ -44,8 +46,10 @@ static MachineSettings ReadMachineSettings(const uint8_t* payload,
     offset += 4;
     for (int i = 0; i < count; ++i) {
         if (offset >= end) break;
+        size_t so = 0;
         settings.LocalDrives.push_back(ReadString(
-            std::span<const uint8_t>(payload + offset, end - offset), offset));
+            std::span<const uint8_t>(payload + offset, end - offset), so));
+        offset += so;
     }
     return settings;
 }
@@ -73,6 +77,7 @@ void WriteSearchRequest(std::vector<uint8_t>& buf,
         WriteInt32LE(std::span<uint8_t>(buf.data() + o + 4, 4), msg.AppLimit);
         WriteString(buf, msg.Query);
         WriteStringList(buf, msg.DisabledAliasComponents.get());
+        buf.push_back(msg.ExactMatch ? 1 : 0);
         break;
     }
     case SearchRequestId::SearchDir: {
@@ -83,6 +88,7 @@ void WriteSearchRequest(std::vector<uint8_t>& buf,
         WriteString(buf, msg.DirectoryFilter);
         WriteString(buf, msg.Query);
         WriteStringList(buf, msg.DisabledAliasComponents.get());
+        buf.push_back(msg.ExactMatch ? 1 : 0);
         break;
     }
     case SearchRequestId::GetFileMetadata:
@@ -98,6 +104,21 @@ void WriteSearchRequest(std::vector<uint8_t>& buf,
     }
     case SearchRequestId::LaunchHook:
         buf.push_back(msg.RequestElevation ? 1 : 0);
+        break;
+    case SearchRequestId::CancelDriveIndex:
+        WriteString(buf, msg.Drive);
+        break;
+    case SearchRequestId::EnumerateDir: {
+        auto o = buf.size();
+        buf.resize(o + 4);
+        WriteInt32LE(std::span<uint8_t>(buf.data() + o, 4), msg.Limit);
+        WriteString(buf, msg.DirectoryFilter);
+        WriteString(buf, msg.Query);
+        buf.push_back(msg.Recursive ? 1 : 0);
+        break;
+    }
+    case SearchRequestId::SubscribeDirectoryChanges:
+        WriteStringList(buf, msg.Directories.get());
         break;
     default:
         break;
@@ -121,28 +142,43 @@ bool ReadSearchRequest(const uint8_t* payload, size_t len,
             ReadMachineSettings(payload, offset, len));
         break;
     case SearchRequestId::RebuildDrive:
-    case SearchRequestId::DeleteDriveIndex:
-        msg.Drive = ReadString(std::span<const uint8_t>(payload + offset, len - offset), offset);
+    case SearchRequestId::DeleteDriveIndex: {
+        size_t so = 0;
+        msg.Drive = ReadString(std::span<const uint8_t>(payload + offset, len - offset), so);
+        offset += so;
         break;
-    case SearchRequestId::Search:
+    }
+    case SearchRequestId::Search: {
         if (offset + 8 > len) return false;
         msg.Limit = ReadInt32LE(std::span<const uint8_t>(payload + offset, 4));
         msg.AppLimit = ReadInt32LE(std::span<const uint8_t>(payload + offset + 4, 4));
         offset += 8;
-        msg.Query = ReadString(std::span<const uint8_t>(payload + offset, len - offset), offset);
+        size_t so = 0;
+        msg.Query = ReadString(std::span<const uint8_t>(payload + offset, len - offset), so);
+        offset += so;
         msg.DisabledAliasComponents = std::make_unique<std::vector<std::string>>(
             ReadStringList(payload, offset, len));
+        if (offset >= len) return false;
+        msg.ExactMatch = payload[offset++] != 0;
         break;
-    case SearchRequestId::SearchDir:
+    }
+    case SearchRequestId::SearchDir: {
         if (offset + 8 > len) return false;
         msg.Limit = ReadInt32LE(std::span<const uint8_t>(payload + offset, 4));
         msg.AppLimit = ReadInt32LE(std::span<const uint8_t>(payload + offset + 4, 4));
         offset += 8;
-        msg.DirectoryFilter = ReadString(std::span<const uint8_t>(payload + offset, len - offset), offset);
-        msg.Query = ReadString(std::span<const uint8_t>(payload + offset, len - offset), offset);
+        size_t so = 0;
+        msg.DirectoryFilter = ReadString(std::span<const uint8_t>(payload + offset, len - offset), so);
+        offset += so;
+        so = 0;
+        msg.Query = ReadString(std::span<const uint8_t>(payload + offset, len - offset), so);
+        offset += so;
         msg.DisabledAliasComponents = std::make_unique<std::vector<std::string>>(
             ReadStringList(payload, offset, len));
+        if (offset >= len) return false;
+        msg.ExactMatch = payload[offset++] != 0;
         break;
+    }
     case SearchRequestId::GetFileMetadata:
         msg.FilePaths = std::make_unique<std::vector<std::string>>(
             ReadStringList(payload, offset, len));
@@ -158,6 +194,30 @@ bool ReadSearchRequest(const uint8_t* payload, size_t len,
     case SearchRequestId::LaunchHook:
         if (offset >= len) return false;
         msg.RequestElevation = payload[offset++] != 0;
+        break;
+    case SearchRequestId::CancelDriveIndex: {
+        size_t so = 0;
+        msg.Drive = ReadString(std::span<const uint8_t>(payload + offset, len - offset), so);
+        offset += so;
+        break;
+    }
+    case SearchRequestId::EnumerateDir: {
+        if (offset + 4 > len) return false;
+        msg.Limit = ReadInt32LE(std::span<const uint8_t>(payload + offset, 4));
+        offset += 4;
+        size_t so = 0;
+        msg.DirectoryFilter = ReadString(std::span<const uint8_t>(payload + offset, len - offset), so);
+        offset += so;
+        so = 0;
+        msg.Query = ReadString(std::span<const uint8_t>(payload + offset, len - offset), so);
+        offset += so;
+        if (offset >= len) return false;
+        msg.Recursive = payload[offset++] != 0;
+        break;
+    }
+    case SearchRequestId::SubscribeDirectoryChanges:
+        msg.Directories = std::make_unique<std::vector<std::string>>(
+            ReadStringList(payload, offset, len));
         break;
     default:
         break;

@@ -23,11 +23,13 @@ struct SearchResult {
     std::string Drive;
     uint64_t RankSortKey = 0;
     FileMetadata Metadata;
+    uint32_t Attributes = 0;
 };
 
 static constexpr uint8_t kEndFrame = 0;
 static constexpr uint8_t kFileResultFrame = 1;
 static constexpr uint8_t kAppResultFrame = 2;
+static constexpr uint8_t kNotIndexedFrame = 3;
 static constexpr uint8_t kHeaderFrame = 255;
 
 void WriteSearchResponseHeader(std::vector<uint8_t>& buf);
@@ -36,6 +38,8 @@ void WriteSearchResponseFileResult(std::vector<uint8_t>& buf,
                                     const SearchResult& result);
 
 void WriteSearchResponseEnd(std::vector<uint8_t>& buf);
+
+void WriteSearchResponseNotIndexed(std::vector<uint8_t>& buf);
 
 bool ReadSearchResponseStream(
     const uint8_t* data, size_t len,
