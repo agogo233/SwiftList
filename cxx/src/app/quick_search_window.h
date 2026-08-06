@@ -8,6 +8,7 @@
 namespace swiftlist::app {
 
 class QuickSearchWindow : public ui::Window {
+    friend class Application;
 public:
     QuickSearchWindow();
     ~QuickSearchWindow() override = default;

@@ -17,11 +17,11 @@ constexpr const wchar_t* kKeyKey = L"HotkeyKey";
 constexpr const wchar_t* kKeyTheme = L"Theme";
 constexpr const wchar_t* kKeyDrives = L"IndexedDrives";
 
-void WritePrivateProfileIntW(const wchar_t* section, const wchar_t* key,
-                               int value, const wchar_t* file) {
+bool WritePrivateProfileIntW(const wchar_t* section, const wchar_t* key,
+                              int value, const wchar_t* file) {
     wchar_t buf[32] = {};
     _snwprintf_s(buf, _TRUNCATE, L"%d", value);
-    WritePrivateProfileStringW(section, key, buf, file);
+    return WritePrivateProfileStringW(section, key, buf, file) != 0;
 }
 
 } // namespace
