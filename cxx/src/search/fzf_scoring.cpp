@@ -49,8 +49,10 @@ BonusTable BuildBonusTable() {
                     } else if (prev == static_cast<int>(CharClass::Number)) {
                         if (cur != CharClass::Number)
                             bonus = BonusCamel123;
-                    } else if (prev == static_cast<int>(CharClass::NonWord) || prev == static_cast<int>(CharClass::Delimiter)) {
+                    } else if (prev == static_cast<int>(CharClass::NonWord)) {
                         bonus = BonusNonWord;
+                    } else if (prev == static_cast<int>(CharClass::Delimiter)) {
+                        bonus = BonusBoundaryDelimiter;
                     } else if (prev == static_cast<int>(CharClass::White)) {
                         bonus = BonusBoundaryWhite;
                     }
