@@ -58,7 +58,7 @@ void UsnMonitor::PollLoop() {
         bool ok = ReadUsnJournal(volume_.Get(), journal_, lastReadUsn_,
                                   reasonMask, [this](const UsnRecord& rec) {
             lastReadUsn_ = rec.Usn + 1;
-            live_.Mutate([&](index_v2::Snapshot& /*snap*/, index_v2::DeltaOverlay& delta) {
+            live_.Mutate([&](index_v2::Snapshot& snap, index_v2::DeltaOverlay& delta) {
                 if (rec.Reason & (kReasonFileCreate | kReasonRenameNewName)) {
                     index_v2::FileRecordInput input;
                     input.Id = rec.FileReferenceNumber;
@@ -70,7 +70,8 @@ void UsnMonitor::PollLoop() {
                     delta.Upsert(std::move(input));
                 }
                 if (rec.Reason & (kReasonFileDelete | kReasonRenameOldName)) {
-                    delta.Remove(rec.FileReferenceNumber);
+                    int baseRow = snap.FindRowById(rec.FileReferenceNumber);
+                    delta.Remove(rec.FileReferenceNumber, baseRow);
                 }
             });
         });

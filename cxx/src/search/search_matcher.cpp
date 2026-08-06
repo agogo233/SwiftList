@@ -3,6 +3,7 @@
 #include "search/fzf_top_n.h"
 
 #include <algorithm>
+#include <climits>
 #include <cstring>
 #include <unordered_set>
 
@@ -68,10 +69,11 @@ std::vector<UniqueMatch> SearchMatcher::SearchTerm(const FzfTerm& term, int maxR
             if ((nameMask & termMask) != termMask) continue;
         }
 
-        // Prepare text buffer.
+        // Prepare text buffer and compute per-position bonuses.
         m_textBuf.resize(name.size());
         m_bonusBuf.resize(name.size());
         std::memcpy(m_textBuf.data(), name.data(), name.size());
+        FzfMatcher::ComputeBonuses(m_textBuf, m_bonusBuf);
 
         // Run matcher.
         auto match = FzfMatcher::MatchWithBonuses(m_textBuf, m_bonusBuf, term.AsciiBytes);
@@ -102,9 +104,10 @@ std::vector<UniqueMatch> SearchMatcher::SearchTerm(const FzfTerm& term, int maxR
         }
     }
 
-    // Sort ascending by score.
+    // Sort descending by score, ascending by start for ties (matches C# sort order).
     std::sort(heap.begin(), heap.end(), [](const ScoredMatch& a, const ScoredMatch& b) {
-        return a.Score < b.Score;
+        if (a.Score != b.Score) return a.Score > b.Score;
+        return a.Start < b.Start;
     });
 
     results.reserve(heap.size());
@@ -118,12 +121,13 @@ std::vector<UniqueMatch> SearchMatcher::SearchPattern(const FzfPattern& pattern,
     if (pattern.Terms.empty()) return {};
 
     // For simplicity: search each term independently, then intersect.
-    // (Full AND semantics with scoring is a refinement for later.)
+    // Inner terms use INT_MAX to collect all matching UIDs before intersection;
+    // only the final result is truncated to maxResults.
     std::vector<UniqueMatch> results = SearchTerm(pattern.Terms[0], maxResults);
 
     // If there are more terms, filter results that don't match subsequent terms.
     for (size_t t = 1; t < pattern.Terms.size(); ++t) {
-        auto termResults = SearchTerm(pattern.Terms[t], maxResults);
+        auto termResults = SearchTerm(pattern.Terms[t], INT_MAX);
         // Build a set of UIDs from termResults for fast lookup.
         std::unordered_set<int> termUids;
         for (auto& m : termResults) termUids.insert(m.Uid);

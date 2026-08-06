@@ -43,7 +43,7 @@ void DeltaOverlay::Upsert(FileRecordInput record) {
     m_addedById[record.Id] = idx;
 }
 
-void DeltaOverlay::Remove(UInt128 id) {
+void DeltaOverlay::Remove(UInt128 id, int baseRow) {
     std::lock_guard<std::mutex> lock(m_mutex);
 
     // If in added list, remove it entirely.
@@ -60,12 +60,17 @@ void DeltaOverlay::Remove(UInt128 id) {
         return;
     }
 
-    // Otherwise, mark as deleted in a new override entry.
-    DeltaRecord dr{};
-    dr.Id = id;
-    dr.Removed = true;
-    // We don't know the base row here; caller must resolve via LiveIndex.
-    m_overrides[-1] = std::move(dr); // placeholder; real impl resolves base row
+    // If base row is known, record the deletion in both m_overrides and m_deleted.
+    if (baseRow >= 0) {
+        DeltaRecord dr{};
+        dr.Id = id;
+        dr.Removed = true;
+        m_overrides[baseRow] = std::move(dr);
+        m_deleted.insert(baseRow);
+        return;
+    }
+
+    // Base row unknown and id not in added — nothing to do.
 }
 
 bool DeltaOverlay::TryLookup(UInt128 id, DeltaRecord& record) const {

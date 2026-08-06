@@ -20,6 +20,7 @@ target_sources(engine_tests
         defs_tests.cpp
         utf8_tests.cpp
         arena_tests.cpp
+        delta_overlay_tests.cpp
         snapshot_format_tests.cpp
         snapshot_tests.cpp
         fzf_tests.cpp

@@ -57,21 +57,25 @@ FzfMatchResult FzfMatcher::MatchV2(std::span<const uint8_t> chars,
     std::vector<int> scores(static_cast<size_t>(m) * width);
     std::vector<int> consecutive(static_cast<size_t>(m) * width);
 
-    // Initialize first row (pattern[0]).
+    // Initialize first row (pattern[0]) — tracks inGap like C# FzfFuzzyMatcher.
     {
         int s0 = static_cast<int>(pattern[0]);
+        bool inGap = false;
+        int previous = 0;
         for (int col = firstIdx; col <= lastIdx; ++col) {
             int rel = col - firstIdx;
             if (chars[col] == s0) {
                 int sc = ScoreMatch + bonuses[col] * BonusFirstCharMultiplier;
                 scores[rel] = sc;
                 consecutive[rel] = 1;
+                previous = sc;
+                inGap = false;
             } else {
-                int prev = (rel > 0) ? scores[rel - 1] : 0;
-                int gap = ScoreGapStart; // first gap
-                int sc = std::max(prev + gap, 0);
+                int sc = std::max(previous + (inGap ? ScoreGapExtension : ScoreGapStart), 0);
                 scores[rel] = sc;
                 consecutive[rel] = 0;
+                previous = sc;
+                inGap = true;
             }
         }
     }
@@ -98,24 +102,28 @@ FzfMatchResult FzfMatcher::MatchV2(std::span<const uint8_t> chars,
                 s1 = scores[prevRow + rel - 1] + ScoreMatch;
                 consScore = consecutive[prevRow + rel - 1] + 1;
 
-                // Consecutive bonus logic.
+                // Consecutive bonus logic — uses local variable, never mutates bonuses[].
                 if (consScore > 1) {
                     int firstBonus = bonuses[col - consScore + 1];
-                    if (bonuses[col] >= BonusBoundary && bonuses[col] > firstBonus) {
+                    int curBonus = bonuses[col];
+                    if (curBonus >= BonusBoundary && curBonus > firstBonus) {
                         consScore = 1;
                     } else {
-                        bonuses[col] = std::max<int8_t>(
-                                                  std::max<int8_t>(firstBonus,
-                                                           static_cast<int8_t>(BonusConsecutive)),
-                                                  bonuses[col]);
+                        curBonus = std::max({curBonus, firstBonus, BonusConsecutive});
                     }
-                }
-
-                if (s1 + bonuses[col] < s2) {
-                    s1 += bonuses[col];
-                    consScore = 0;
+                    if (s1 + curBonus < s2) {
+                        s1 += bonuses[col]; // original bonus, not modified
+                        consScore = 0;
+                    } else {
+                        s1 += curBonus;
+                    }
                 } else {
-                    s1 += bonuses[col];
+                    if (s1 + bonuses[col] < s2) {
+                        s1 += bonuses[col];
+                        consScore = 0;
+                    } else {
+                        s1 += bonuses[col];
+                    }
                 }
             } else {
                 s1 = 0;
@@ -249,7 +257,7 @@ FzfMatchResult FzfMatcher::Match(std::string_view text, std::string_view pattern
     }
     if (text.empty() || pattern.size() > text.size()) return result;
 
-    // Prepare buffers.
+    // Prepare buffers — lower-case both text and pattern when case-insensitive.
     std::vector<uint8_t> chars(text.size());
     std::vector<int8_t> bonuses(text.size());
     for (size_t i = 0; i < text.size(); ++i) {
@@ -257,14 +265,20 @@ FzfMatchResult FzfMatcher::Match(std::string_view text, std::string_view pattern
         if (!caseSensitive && text[i] >= 'A' && text[i] <= 'Z')
             chars[i] = static_cast<uint8_t>(text[i] - 'A' + 'a');
     }
+    std::string lowerPattern(pattern);
+    if (!caseSensitive) {
+        for (auto& c : lowerPattern) {
+            if (c >= 'A' && c <= 'Z') c = static_cast<char>(c - 'A' + 'a');
+        }
+    }
 
     ComputeBonuses(chars, bonuses);
 
     int cells = static_cast<int>(pattern.size()) * static_cast<int>(text.size());
     if (cells <= MaxV2Cells && pattern.size() <= 1000) {
-        return MatchV2(chars, bonuses, pattern);
+        return MatchV2(chars, bonuses, lowerPattern);
     }
-    return MatchV1(chars, bonuses, pattern);
+    return MatchV1(chars, bonuses, lowerPattern);
 }
 
 FzfMatchResult FzfMatcher::MatchWithBonuses(std::span<const uint8_t> chars,

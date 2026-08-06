@@ -268,3 +268,93 @@ TEST(BoundedTest, PopBestOrder) {
     EXPECT_EQ(topn.PopBest(), 7);
     EXPECT_TRUE(topn.IsEmpty());
 }
+
+// --- V2 scoring correctness ---
+// Golden values hand-computed against C# FzfAlgorithm constants.
+
+TEST(FzfMatcherTest, ScoringExactMatch) {
+    // "abc" matching "abc" exactly: boundary bonus + 3*ScoreMatch + consecutive bonus for each char
+    auto result = FzfMatcher::Match("abc", "abc");
+    EXPECT_TRUE(result.Matched);
+    EXPECT_EQ(result.Score, 88);
+}
+
+TEST(FzfMatcherTest, ScoringFuzzySkipChar) {
+    // "abc" matching "ac" (skip 'b'): lower score than exact
+    auto result = FzfMatcher::Match("abc", "ac");
+    EXPECT_TRUE(result.Matched);
+    EXPECT_EQ(result.Score, 49);
+}
+
+TEST(FzfMatcherTest, ScoringHelloFuzzy) {
+    // "hello" matching "hlo" (skip 'e', 'lo' at end is consecutive)
+    auto result = FzfMatcher::Match("hello", "hlo");
+    EXPECT_TRUE(result.Matched);
+    EXPECT_EQ(result.Score, 68);
+}
+
+TEST(FzfMatcherTest, ScoringCaseInsensitiveUppercasePattern) {
+    // "abc" matching "ABC" case-insensitive should equal "abc" vs "abc"
+    auto result = FzfMatcher::Match("abc", "ABC", false);
+    EXPECT_TRUE(result.Matched);
+    EXPECT_EQ(result.Score, 88);
+}
+
+TEST(FzfMatcherTest, ScoringBoundaryDelimiter) {
+    // "my.read.txt" matching "read": '.' is delimiter → boundary bonus
+    auto result = FzfMatcher::Match("my.read.txt", "read");
+    EXPECT_TRUE(result.Matched);
+    // Boundary bonus (Delimiter->Lower = 9) should be applied at 'r' position
+    EXPECT_GT(result.Score, 0);
+}
+
+TEST(FzfMatcherTest, ScoringConsecutiveVsScattered) {
+    // "abcdef" vs "def" (consecutive end) should score higher than "axbycdef" vs "def" (scattered)
+    auto consecutive = FzfMatcher::Match("abcdef", "def");
+    auto scattered = FzfMatcher::Match("axbycdef", "def");
+    EXPECT_TRUE(consecutive.Matched);
+    EXPECT_TRUE(scattered.Matched);
+    EXPECT_GT(consecutive.Score, scattered.Score);
+}
+
+TEST(FzfMatcherTest, ScoringFirstCharBonus) {
+    // Match at start gets White→Lower bonus (10), match in middle gets Lower→Lower (0)
+    // Both with first char multiplier (2x)
+    auto atStart = FzfMatcher::Match("file.txt", "file");
+    auto inMiddle = FzfMatcher::Match("prefix_file.txt", "file");
+    EXPECT_TRUE(atStart.Matched);
+    EXPECT_TRUE(inMiddle.Matched);
+    EXPECT_GT(atStart.Score, inMiddle.Score);
+}
+
+TEST(FzfMatcherTest, MatchWithBonusesPopulated) {
+    // Verify that the MatchWithBonuses path (used by SearchMatcher) works correctly
+    // when bonuses are pre-computed.
+    std::string text = "hello";
+    std::vector<uint8_t> chars(text.begin(), text.end());
+    std::vector<int8_t> bonuses(chars.size());
+    FzfMatcher::ComputeBonuses(chars, bonuses);
+    auto result = FzfMatcher::MatchWithBonuses(chars, bonuses, "hlo");
+    EXPECT_TRUE(result.Matched);
+    EXPECT_EQ(result.Score, 68);
+}
+
+TEST(FzfMatcherTest, SingleCharMatch) {
+    // Single character pattern should match correctly
+    auto result = FzfMatcher::Match("abcdef", "d");
+    EXPECT_TRUE(result.Matched);
+    EXPECT_GT(result.Score, 0);
+}
+
+TEST(FzfMatcherTest, NoMatchWrongOrder) {
+    // Characters in wrong order should not match
+    auto result = FzfMatcher::Match("abc", "cba");
+    EXPECT_FALSE(result.Matched);
+}
+
+TEST(FzfMatcherTest, MatchAtEnd) {
+    // Pattern matching at the end of string
+    auto result = FzfMatcher::Match("prefix.suffix", "suffix");
+    EXPECT_TRUE(result.Matched);
+    EXPECT_GT(result.Score, 0);
+}

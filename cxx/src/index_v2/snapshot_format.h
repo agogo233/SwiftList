@@ -10,9 +10,12 @@
 
 namespace swiftlist::index_v2 {
 
-// Binary format constants. Must stay in sync with C# SnapshotFormat.
+// Binary format constants. Must stay in sync with C# SnapshotFormat.Version (9).
+// History: v4→v6 added DOS 8.3 name fallback; v7 added Size real-size; v8→v9 added
+// multi-extent MFT attribute list support. None changed header/section layout, so bumping
+// the version number is sufficient for C++→C# snapshot interchange.
 inline constexpr uint64_t kMagic = 0x0000005844494C53ULL; // "SLIDX\0\0\0" little-endian
-inline constexpr int kVersion = 4;
+inline constexpr int kVersion = 9;
 inline constexpr int kSectionAlignment = 16;
 
 enum class SnapshotSection : int {

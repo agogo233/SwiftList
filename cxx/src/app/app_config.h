@@ -5,6 +5,8 @@
 
 namespace swiftlist::app {
 
+// Not wired to any caller yet — AppConfig::Load/Save are not called from the
+// app or service entry points. Kept for future configuration persistence.
 struct AppConfig {
     int HotkeyModifiers = 2;    // MOD_CONTROL
     int HotkeyKey = 32;         // VK_SPACE

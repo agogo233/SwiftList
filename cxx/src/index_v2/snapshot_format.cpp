@@ -11,6 +11,10 @@ namespace swiftlist::index_v2 {
 
 namespace {
 
+// Maximum string length read from snapshot to prevent large allocation on
+// corrupt/malicious input (64 MiB).
+inline constexpr int32_t kMaxStringLength = 64 * 1024 * 1024;
+
 void Write7BitEncoded(std::ostream& s, int32_t value) {
     uint32_t v = static_cast<uint32_t>(value);
     while (v >= 0x80) {
@@ -41,6 +45,8 @@ void WriteString(std::ostream& s, const std::string& str) {
 std::string ReadString(std::istream& s) {
     auto len = Read7BitEncoded(s);
     if (len < 0) throw std::runtime_error("Negative string length in snapshot");
+    if (len > kMaxStringLength)
+        throw std::runtime_error("String length exceeds maximum in snapshot");
     std::string result(static_cast<size_t>(len), '\0');
     s.read(result.data(), len);
     if (!s) throw std::runtime_error("Unexpected EOF reading string");

@@ -54,7 +54,8 @@ public:
     void Upsert(FileRecordInput record);
 
     // Remove a record by Id (marks as deleted in overlay or removes from added).
-    void Remove(UInt128 id);
+    // If baseRow >= 0, the record is known to be in the base snapshot at that row.
+    void Remove(UInt128 id, int baseRow = -1);
 
     // Lookup: returns true if found. Thread-safe.
     [[nodiscard]] bool TryLookup(UInt128 id, DeltaRecord& record) const;
